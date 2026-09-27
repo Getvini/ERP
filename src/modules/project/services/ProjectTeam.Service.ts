@@ -324,9 +324,23 @@ export class ProjectTeamService {
 
         const membership = await this.memberRepository.findOne({
             where: SecurityService.withTenant({ team: { id: teamId }, user: { id: userId } }),
-            relations: ["team", "team.teamLead", "user"]
+            relations: ["team", "team.teamLead", "user", "roles"]
         });
         if (!membership) throw this.httpError("Không tìm thấy thành viên", 404);
+
+        const hadAccountRole = memberHasRole(membership, MemberRole.ACCOUNT);
+        if (hadAccountRole && !requestedRoles.includes(MemberRole.ACCOUNT)) {
+            const allTeamMembers = await this.memberRepository.find({
+                where: SecurityService.withTenant({ team: { id: teamId } }),
+                relations: ["roles", "user"]
+            });
+            const otherAccountMembers = allTeamMembers.filter(m =>
+                m.user?.id !== userId && memberHasRole(m, MemberRole.ACCOUNT)
+            );
+            if (otherAccountMembers.length === 0) {
+                throw this.httpError("Đội dự án phải có ít nhất 1 nhân sự giữ vai trò Account/Lead dự án. Không thể gỡ bỏ vai trò này.", 400);
+            }
+        }
 
         const currentRoles = new Set((membership.roles || []).map(item => item.role));
         const rolesToRemove = (membership.roles || []).filter(item => !requestedRoles.includes(item.role));
@@ -358,12 +372,28 @@ export class ProjectTeamService {
     async removeMember(memberId: string, actor?: ActorInfo) {
         const member = await this.memberRepository.findOne({
             where: SecurityService.withTenant({ id: memberId }),
-            relations: ["team", "team.teamLead", "user"]
+            relations: ["team", "team.teamLead", "user", "roles"]
         });
         if (!member) throw new Error("Không tìm thấy thành viên");
         await this.assertCanMutateTeamMember(member.team.id, member.user.id, actor);
 
-        if (member.team && member.team.teamLead && member.user.id === member.team.teamLead.id) {
+        const hasAccountRole = memberHasRole(member, MemberRole.ACCOUNT) || (member.team?.teamLead?.id === member.user?.id);
+        if (hasAccountRole) {
+            const allTeamMembers = await this.memberRepository.find({
+                where: SecurityService.withTenant({ team: { id: member.team.id } }),
+                relations: ["roles", "user"]
+            });
+            const otherAccountMembers = allTeamMembers.filter(m =>
+                m.user?.id !== member.user?.id && memberHasRole(m, MemberRole.ACCOUNT)
+            );
+            if (otherAccountMembers.length === 0) {
+                throw this.httpError("Đội dự án phải có ít nhất 1 nhân sự giữ vai trò Account/Lead dự án. Không thể xóa nhân sự này.", 400);
+            }
+            if (member.team && member.team.teamLead && member.user?.id === member.team.teamLead.id) {
+                member.team.teamLead = otherAccountMembers[0].user;
+                await this.teamRepository.save(member.team);
+            }
+        } else if (member.team && member.team.teamLead && member.user.id === member.team.teamLead.id) {
             throw new Error("Không thể xóa thành viên đang là Team Lead. Vui lòng chỉ định Lead mới trước khi xóa.");
         }
         return await this.memberRepository.remove(member);
