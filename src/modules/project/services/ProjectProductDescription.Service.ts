@@ -4,7 +4,7 @@ import { SecurityService } from "../../../shared/services/Security.Service";
 import { UserRole } from "../../account/entities/Account.entity";
 import { Users } from "../../user/entities/User.entity";
 import { Projects, ProjectStatus } from "../entities/Project.entity";
-import { MemberRole, memberHasRole } from "../entities/TeamMember.entity";
+import { MemberRole, TeamMembers, memberHasRole } from "../entities/TeamMember.entity";
 import { ulid } from "ulid";
 import {
     ProjectProductDescriptionStatus,
@@ -45,6 +45,7 @@ export class ProjectProductDescriptionService {
     private userRepository = AppDataSource.getRepository(Users);
     private submissionRepository = AppDataSource.getRepository(ProjectProductDescriptionSubmissions);
     private itemRepository = AppDataSource.getRepository(ProjectProductDescriptionItems);
+    private teamMemberRepository = AppDataSource.getRepository(TeamMembers);
     private notificationService = new NotificationService();
 
     private httpError(message: string, statusCode: number) {
@@ -277,10 +278,17 @@ export class ProjectProductDescriptionService {
         }
     }
 
-    private getProjectManagers(project: Projects) {
-        const recipients = (project.team?.members || [])
-            .filter(member => memberHasRole(member, MemberRole.PROJECT_MANAGER) && member.user)
-            .map(member => member.user);
+    // Không dùng project.team.members: assertProjectAccess áp bộ lọc RBAC theo người thao tác lên
+    // chính quan hệ này, nên với Account/nhân sự nó chỉ còn đúng dòng của người đó (không có PM).
+    // Vì vậy phải truy vấn danh sách PM trực tiếp theo team.
+    private async getProjectManagers(project: Projects) {
+        const teamId = project.team?.id;
+        if (!teamId) return [];
+        const members = await this.teamMemberRepository.find({
+            where: SecurityService.withTenant({ team: { id: teamId }, roles: { role: MemberRole.PROJECT_MANAGER } }),
+            relations: ["user"]
+        });
+        const recipients = members.filter(member => member.user).map(member => member.user);
         return Array.from(new Map(recipients.map(user => [user.id, user])).values());
     }
 
@@ -290,8 +298,17 @@ export class ProjectProductDescriptionService {
         type: string;
         relatedEntityId?: string;
     }, excludeUserId?: string) {
-        for (const recipient of this.getProjectManagers(project)) {
-            if (excludeUserId && recipient.id === excludeUserId) continue;
+        const managers = await this.getProjectManagers(project);
+        if (managers.length === 0) {
+            console.warn(`[ProductDescription] Dự án ${project.id} không có thành viên team nào mang role PROJECT_MANAGER, không gửi được thông báo.`);
+            return;
+        }
+        const recipients = managers.filter(recipient => !(excludeUserId && recipient.id === excludeUserId));
+        if (recipients.length === 0) {
+            console.warn(`[ProductDescription] PM duy nhất của dự án ${project.id} chính là người gửi, không có ai nhận thông báo.`);
+            return;
+        }
+        for (const recipient of recipients) {
             await this.notificationService.createNotification({
                 title: data.title,
                 content: data.content,
@@ -445,13 +462,6 @@ export class ProjectProductDescriptionService {
         submission.reviewNote = null as any;
         await this.submissionRepository.save(submission);
 
-        await this.notifyProjectManagers(project, {
-            title: "Thông tin chuẩn sản phẩm chờ duyệt",
-            content: `Dự án "${project.name}" có bản thông tin chuẩn sản phẩm mới cần PM duyệt.`,
-            type: "PRODUCT_DESCRIPTION_SUBMITTED",
-            relatedEntityId: submission.id
-        }, this.getActorUserId(actor));
-
         return this.findSubmissionForProject(projectId, submission.id);
     }
 
@@ -478,6 +488,13 @@ export class ProjectProductDescriptionService {
         submission.reviewedAt = null as any;
         submission.reviewNote = null as any;
         await this.submissionRepository.save(submission);
+
+        await this.notifyProjectManagers(project, {
+            title: "Thông tin chuẩn sản phẩm chờ duyệt",
+            content: `Dự án "${project.name}" có bản thông tin chuẩn sản phẩm mới cần PM duyệt.`,
+            type: "PRODUCT_DESCRIPTION_SUBMITTED",
+            relatedEntityId: submission.id
+        }, this.getActorUserId(actor));
 
         return this.findSubmissionForProject(projectId, submission.id);
     }
