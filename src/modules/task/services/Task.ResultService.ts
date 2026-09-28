@@ -128,6 +128,10 @@ export class TaskResultService extends TaskBaseService {
         if (!task.result || ((resultType === "FILE" || resultType === "LINK") && !task.result.url)) {
             throw this.httpError("Vui lòng upload hoặc nhập kết quả trước khi gửi duyệt", 400);
         }
+        const isAdmin = currentUser?.role === UserRole.ADMIN;
+        if (!isAdmin && task.lastSubmittedById !== currentId) {
+            throw this.httpError("Chỉ người đã nộp kết quả hoặc Admin mới được gửi duyệt", 403);
+        }
 
         // Chỉ tự động duyệt khi chính người nộp cũng có quyền quyết định kết quả.
         // Hàm dùng chung bên dưới luôn loại người thực hiện/helper khỏi quyền này.

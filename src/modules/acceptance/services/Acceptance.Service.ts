@@ -230,12 +230,12 @@ export class AcceptanceService {
     for (const bod of bods) {
       await this.notificationService.createNotification({
         title: "Yêu cầu nghiệm thu mới",
-        content: `Team Lead ${requester.fullName} yêu cầu nghiệm thu đợt: ${name} của dự án ${request.project?.name}`,
+        content: ` ${requester.fullName} yêu cầu nghiệm thu đợt: ${savedRequest.name} của dự án ${request.project?.name}`,
         type: "ACCEPTANCE_REQUESTED",
         recipient: bod,
         relatedEntityId: savedRequest.id,
         relatedEntityType: "AcceptanceRequest",
-        link: `/acceptance/${savedRequest.id}`,
+        link: `/acceptance`,
       });
     }
 
