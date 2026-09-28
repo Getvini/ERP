@@ -33,6 +33,29 @@ export class OpportunityService {
     private packageRepository = AppDataSource.getRepository(ServicePackages);
     private notificationService = new NotificationService();
 
+    private async getBodUsers() {
+        return await this.userRepository.find({
+            where: { accounts: { role: UserRole.BOD } },
+            relations: ["accounts"]
+        });
+    }
+
+    private async notifyBodCustomerAdded(opportunity: Opportunities, sender?: Users) {
+        const bodUsers = await this.getBodUsers();
+        for (const user of bodUsers) {
+            await this.notificationService.createNotification({
+                title: "Cơ hội đã có khách hàng",
+                content: `Cơ hội ${opportunity.name} đã có khách hàng`,
+                type: "OPPORTUNITY_CUSTOMER_ADDED",
+                recipient: user,
+                sender,
+                relatedEntityId: opportunity.id,
+                relatedEntityType: "Opportunities",
+                link: `/opportunities/${opportunity.id}`
+            });
+        }
+    }
+
     private async checkTaxIdUniqueness(taxId: string, userInfo?: { companyId?: string }, excludeOpportunityId?: string) {
         if (!taxId) return;
 
@@ -391,7 +414,7 @@ export class OpportunityService {
         if (leadAddress !== undefined) updateObj.leadAddress = leadAddress;
         if (leadTaxId !== undefined) {
             if (leadTaxId) {
-            await this.checkTaxIdUniqueness(leadTaxId, userInfo, id);
+                await this.checkTaxIdUniqueness(leadTaxId, userInfo, id);
             }
             updateObj.leadTaxId = leadTaxId;
         }
@@ -481,6 +504,89 @@ export class OpportunityService {
         return freshData;
     }
 
+    async addCustomer(id: string, data: any = {}, userInfo?: { id: string, role: string, userId?: string, companyId?: string }) {
+        const { customerId, referralPartnerId, customerType } = data;
+        if (!customerId) {
+            throw new Error("Vui lòng chọn khách hàng");
+        }
+
+        const opportunity = await this.opportunityRepository.findOne({
+            where: SecurityService.withTenant({ id }, userInfo),
+            relations: ["customer", "createdBy"]
+        });
+        if (!opportunity) {
+            throw new Error("Không tìm thấy cơ hội kinh doanh");
+        }
+
+        const customer = await this.customerRepository.findOne({
+            where: SecurityService.withTenant({ id: customerId }, userInfo)
+        });
+        if (!customer) {
+            throw new Error("Không tìm thấy khách hàng");
+        }
+
+        const shouldNotifyBod = opportunity.customer?.id !== customer.id;
+
+        opportunity.customer = customer;
+        if (customerType) {
+            opportunity.customerType = customerType;
+        }
+        opportunity.leadName = null;
+        opportunity.leadPhone = null;
+        opportunity.leadEmail = null;
+        opportunity.leadAddress = null;
+        opportunity.leadTaxId = null;
+
+        if (referralPartnerId) {
+            const partner = await this.referralPartnerRepository.findOne({
+                where: SecurityService.withTenant({ id: referralPartnerId }, userInfo)
+            });
+            if (!partner) throw new Error("Không tìm thấy đối tác giới thiệu");
+            opportunity.referralPartner = partner;
+            opportunity.customerType = CustomerType.REFERRAL;
+        } else if (customerType === CustomerType.DIRECT) {
+            opportunity.referralPartner = null;
+        }
+
+        await this.opportunityRepository.save(opportunity);
+
+        await RedisService.deleteCache('opportunities:all*');
+        await RedisService.deleteCache(`opportunities:detail:${id}*`);
+
+        const freshData = await this.opportunityRepository.findOne({
+            where: SecurityService.withTenant({ id }, userInfo),
+            relations: [
+                "customer",
+                "referralPartner",
+                "services",
+                "services.service",
+                "services.jobs",
+                "services.jobs.job",
+                "packages",
+                "packages.services",
+                "packages.services.service",
+                "packages.services.jobs",
+                "packages.services.jobs.job",
+                "quotations",
+                "contracts",
+                "createdBy", "createdBy.accounts"
+            ]
+        });
+
+        if (freshData) {
+            opportunityEmitter.emit(OPPORTUNITY_EVENTS.UPDATED, freshData);
+
+            if (shouldNotifyBod) {
+                const sender = userInfo?.userId
+                    ? await this.userRepository.findOne({ where: { id: userInfo.userId } }) || undefined
+                    : undefined;
+                await this.notifyBodCustomerAdded(freshData, sender);
+            }
+        }
+
+        return freshData;
+    }
+
     async delete(id: string) {
         const opportunity = await this.getOne(id);
         await this.opportunityRepository.remove(opportunity);
@@ -493,6 +599,7 @@ export class OpportunityService {
 
         return { message: "Xóa cơ hội kinh doanh thành công" };
     }
+
 
     async approve(id: string) {
         const opportunity = await this.getOne(id);

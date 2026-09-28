@@ -15,3 +15,4 @@ docs/
 migrations/
 .agents/
 skills-lock.json
+*.md
