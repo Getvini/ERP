@@ -13,3 +13,5 @@ test/
 n8n_data/
 docs/
 migrations/
+.agents/
+skills-lock.json
