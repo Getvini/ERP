@@ -24,28 +24,50 @@ export class QuotationService {
     private notificationService = new NotificationService();
     private contractService = new ContractService();
 
-    private async getManagementUsers() {
+    private async getUsersByRoles(roles: UserRole[]) {
         return await AppDataSource.getRepository(Users).find({
-            where: [
-                { accounts: { role: UserRole.BOD } },
-                { accounts: { role: UserRole.ADMIN } }
-            ],
+            where: roles.map(role => ({ accounts: { role } })),
             relations: ["accounts"]
         });
     }
 
-    private async notifyManagement(data: { title: string, content: string, quotationId: string, link?: string, relatedEntityId?: string, relatedEntityType?: string }) {
-        const managers = await this.getManagementUsers();
-        for (const manager of managers) {
+    private async notifyRoles(roles: UserRole[], data: { title: string, content: string, quotationId: string, link?: string, relatedEntityId?: string, relatedEntityType?: string }) {
+        const recipients = await this.getUsersByRoles(roles);
+        for (const recipient of recipients) {
             await this.notificationService.createNotification({
                 ...data,
                 type: "QUOTATION_UPDATE",
-                recipient: manager,
+                recipient,
                 link: data.link || `/quotations/${data.quotationId}`,
                 relatedEntityId: data.relatedEntityId || data.quotationId,
                 relatedEntityType: data.relatedEntityType || "Quotations"
             });
         }
+    }
+
+    private async notifyManagement(data: { title: string, content: string, quotationId: string, link?: string, relatedEntityId?: string, relatedEntityType?: string }) {
+        await this.notifyRoles([UserRole.BOD, UserRole.ADMIN], data);
+    }
+
+    private async notifyBod(data: { title: string, content: string, quotationId: string, link?: string, relatedEntityId?: string, relatedEntityType?: string }) {
+        await this.notifyRoles([UserRole.BOD], data);
+    }
+
+    private async notifyOpportunityCreator(quotation: Quotations, description?: string) {
+        const opportunity = quotation.opportunity;
+        const creator = opportunity?.createdBy;
+        if (!opportunity?.id || !creator?.id) return;
+
+        const reason = description?.trim();
+        await this.notificationService.createNotification({
+            title: "Báo giá bị từ chối",
+            content: `Báo giá lần ${quotation.version} của cơ hội ${opportunity.opportunityCode}-${opportunity.name} bị từ chối.${reason ? ` Lý do: ${reason}` : ""}`,
+            type: "QUOTATION_REJECTED",
+            recipient: creator,
+            link: `/opportunities/${opportunity.id}`,
+            relatedEntityId: opportunity.id,
+            relatedEntityType: "Opportunities"
+        });
     }
 
     async getAll() {
@@ -212,10 +234,10 @@ export class QuotationService {
         
         const saved = await this.quotationRepository.save(savedQuotation);
 
-        // Notify management
-        await this.notifyManagement({
+        // Notify BOD when a new quotation is created.
+        await this.notifyBod({
             title: "Báo giá mới",
-            content: `Báo giá mới được tạo - ${opportunity.name} `,
+            content: `Báo giá mới được tạo - ${opportunity.name}`,
             quotationId: saved.id
         });
 
@@ -311,8 +333,8 @@ export class QuotationService {
         savedQuotation.tasks = tasks; // Link tasks to quotation
         const saved = await this.quotationRepository.save(savedQuotation);
 
-        // Notify management
-        await this.notifyManagement({
+        // Notify BOD when a new addendum quotation is created.
+        await this.notifyBod({
             title: "Báo giá phụ lục mới",
             content: `Báo giá phụ lục Ver ${saved.version} cho cơ hội ${opportunity.opportunityCode}-${opportunity.name} đã được tạo bởi ${userInfo?.userId || 'Hệ thống'}`,
             quotationId: saved.id
@@ -513,12 +535,7 @@ export class QuotationService {
         quotation.description = description;
         const saved = await this.quotationRepository.save(quotation);
 
-        // Notify management
-        await this.notifyManagement({
-            title: "Báo giá cần chỉnh sửa",
-            content: `Báo giá cần chỉnh sửa - ${saved.opportunity?.name} `,
-            quotationId: saved.id
-        });
+        await this.notifyOpportunityCreator(saved, description);
 
         quotationEmitter.emit(QUOTATION_EVENTS.REJECTED, saved);
 
