@@ -20,6 +20,7 @@ import { NotificationService } from "../../notification/services/Notification.Se
 import { VinicoinService } from "../../../shared/services/Vinicoin.Service";
 import { EntityManager, In, Not, ILike } from "typeorm";
 import { UserRole } from "../../account/entities/Account.entity";
+import { acceptanceEmitter, ACCEPTANCE_EVENTS } from "../events/AcceptanceEmitter";
 
 type AcceptanceActor = { userId?: string; role?: string };
 
@@ -238,6 +239,8 @@ export class AcceptanceService {
       });
     }
 
+    acceptanceEmitter.emit(ACCEPTANCE_EVENTS.CREATED, savedRequest);
+
     return savedRequest;
   }
 
@@ -247,7 +250,7 @@ export class AcceptanceService {
     feedback?: string,
   ) {
     const approverId = this.assertAcceptanceActor(actor);
-    return AppDataSource.transaction(async (manager) => {
+    const result = await AppDataSource.transaction(async (manager) => {
       const request = await this.getLockedRequest(manager, requestId, [
         "services",
         "services.tasks",
@@ -321,6 +324,8 @@ export class AcceptanceService {
       );
       return request;
     });
+    acceptanceEmitter.emit(ACCEPTANCE_EVENTS.APPROVED, result);
+    return result;
   }
 
   async rejectRequest(
@@ -330,7 +335,7 @@ export class AcceptanceService {
   ) {
     const approverId = this.assertAcceptanceActor(actor);
     if (!feedback) throw this.httpError("Vui lòng nhập lý do từ chối", 400);
-    return AppDataSource.transaction(async (manager) => {
+    const result = await AppDataSource.transaction(async (manager) => {
       const request = await this.getLockedRequest(manager, requestId, [
         "services",
         "services.tasks",
@@ -393,6 +398,8 @@ export class AcceptanceService {
       );
       return request;
     });
+    acceptanceEmitter.emit(ACCEPTANCE_EVENTS.REJECTED, result);
+    return result;
   }
 
   async processRequest(
@@ -405,7 +412,7 @@ export class AcceptanceService {
     }[],
   ) {
     const approverId = this.assertAcceptanceActor(actor);
-    return AppDataSource.transaction(async (manager) => {
+    const result = await AppDataSource.transaction(async (manager) => {
       const request = await this.getLockedRequest(manager, requestId, [
         "services",
         "services.tasks",
@@ -604,6 +611,8 @@ export class AcceptanceService {
 
       return request;
     });
+    acceptanceEmitter.emit(ACCEPTANCE_EVENTS.PROCESSED, result);
+    return result;
   }
 
   async getRequest(id: string) {

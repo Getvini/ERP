@@ -6,6 +6,7 @@ import { SecurityService } from "../../../shared/services/Security.Service";
 import { Not, ILike, In } from "typeorm";
 import { validateCustomerData } from "../validations/Customer.Validation";
 import { RedisService } from "../../../shared/services/Redis.Service";
+import { customerEmitter, CUSTOMER_EVENTS } from "../events/CustomerEmitter";
 
 export class CustomerService {
     private customerRepository = AppDataSource.getRepository(Customers);
@@ -152,6 +153,8 @@ export class CustomerService {
         // Invalidate all customer list caches (all roles and users)
         await RedisService.deleteCache('customers:all*');
 
+        customerEmitter.emit(CUSTOMER_EVENTS.CREATED, savedCustomer);
+
         return savedCustomer;
     }
 
@@ -182,6 +185,8 @@ export class CustomerService {
         await RedisService.deleteCache('customers:all*');
         await RedisService.deleteCache(`customers:detail:${id}*`);
 
+        customerEmitter.emit(CUSTOMER_EVENTS.UPDATED, savedCustomer);
+
         return savedCustomer;
     }
 
@@ -192,6 +197,8 @@ export class CustomerService {
         // Invalidate all list caches and this specific customer's detail caches
         await RedisService.deleteCache('customers:all*');
         await RedisService.deleteCache(`customers:detail:${id}*`);
+
+        customerEmitter.emit(CUSTOMER_EVENTS.DELETED, { id });
 
         return { message: "Xóa khách hàng thành công" };
     }

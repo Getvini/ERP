@@ -3,6 +3,7 @@ import { AddendumStatus, AddendumType, ContractAddendums } from "../../contract-
 import { Services } from "../../service/entities/Service.entity";
 import { SecurityService } from "../../../shared/services/Security.Service";
 import { projectEmitter, PROJECT_EVENTS } from "../events/ProjectEmitter";
+import { contractAddendumEmitter, CONTRACT_ADDENDUM_EVENTS } from "../../contract-addendum/events/ContractAddendumEmitter";
 import { ProjectBaseService } from "./Project.BaseService";
 
 type AddServiceItem = {
@@ -113,6 +114,7 @@ export class ProjectServiceAddendumService extends ProjectBaseService {
             relatedEntityType: "ContractAddendum"
         });
         projectEmitter.emit(PROJECT_EVENTS.UPDATED, project);
+        contractAddendumEmitter.emit(CONTRACT_ADDENDUM_EVENTS.CREATED, saved);
         return saved;
     }
 }

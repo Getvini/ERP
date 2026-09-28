@@ -5,6 +5,7 @@ import { validateUserData } from "../validations/User.Validation";
 import { AppDataSource } from "../../../data-source";
 import { RedisService } from "../../../shared/services/Redis.Service";
 import { WorkloadService } from "../../../shared/services/Workload.Service";
+import { userEmitter, USER_EVENTS } from "../events/UserEmitter";
 
 
 export class UserService {
@@ -133,8 +134,9 @@ export class UserService {
         }
         if (isLocked !== undefined) user.isLocked = isLocked;
 
+        let savedUser: Users | null = null;
         await AppDataSource.transaction(async (transactionalEntityManager) => {
-            const savedUser = await transactionalEntityManager.save(user);
+            savedUser = await transactionalEntityManager.save(user);
             account.user = savedUser;
             account.userId = savedUser.id;
             await transactionalEntityManager.save(account);
@@ -142,6 +144,8 @@ export class UserService {
 
         // Xóa cache danh sách khi có user mới
         await RedisService.deleteCache(this.getCacheKey('users:all'));
+
+        if (savedUser) userEmitter.emit(USER_EVENTS.CREATED, savedUser);
 
         return { message: "Tạo người dùng thành công" };
     }
@@ -172,6 +176,8 @@ export class UserService {
         await RedisService.deleteCache(this.getCacheKey('users:all'));
         await RedisService.deleteCache(this.getCacheKey(`users:detail:${id}`));
 
+        userEmitter.emit(USER_EVENTS.UPDATED, savedUser);
+
         return savedUser;
     }
 
@@ -183,6 +189,8 @@ export class UserService {
         // Xóa cache danh sách và cache chi tiết của user vừa update
         await RedisService.deleteCache(this.getCacheKey('users:all'));
         await RedisService.deleteCache(this.getCacheKey(`users:detail:${id}`));
+
+        userEmitter.emit(USER_EVENTS.UPDATED, savedUser);
 
         return savedUser;
     }
@@ -203,6 +211,8 @@ export class UserService {
         // Xóa cache danh sách và cache chi tiết của user vừa xóa
         await RedisService.deleteCache(this.getCacheKey('users:all'));
         await RedisService.deleteCache(this.getCacheKey(`users:detail:${id}`));
+
+        userEmitter.emit(USER_EVENTS.DELETED, { id });
 
         return { message: "Xóa người dùng thành công" };
     }

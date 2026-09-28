@@ -9,6 +9,7 @@ import { WorkloadService } from "../../../shared/services/Workload.Service";
 import { Projects, ProjectStatus } from "../entities/Project.entity";
 import { In } from "typeorm";
 import { NotificationService } from "../../notification/services/Notification.Service";
+import { teamEmitter, TEAM_EVENTS } from "../events/TeamEmitter";
 
 type ActorInfo = { id: string; userId?: string; role: string };
 
@@ -196,7 +197,9 @@ export class ProjectTeamService {
             ...SecurityService.getTenantWhere()
         } as any);
 
-        return await this.teamRepository.save(team);
+        const savedTeam = await this.teamRepository.save(team);
+        teamEmitter.emit(TEAM_EVENTS.CREATED, savedTeam);
+        return savedTeam;
     }
 
     async update(id: string, data: { name?: string, teamLeadId?: string }, actor?: ActorInfo) {
@@ -209,7 +212,9 @@ export class ProjectTeamService {
             team.teamLead = updatedTeam.teamLead;
         }
 
-        return await this.teamRepository.save(team);
+        const savedTeam = await this.teamRepository.save(team);
+        teamEmitter.emit(TEAM_EVENTS.UPDATED, savedTeam);
+        return savedTeam;
     }
 
     async changeLead(teamId: string, newLeadId: string, actor?: ActorInfo) {
@@ -238,7 +243,9 @@ export class ProjectTeamService {
         }
 
         team.teamLead = newLead;
-        return await this.teamRepository.save(team);
+        const savedTeam = await this.teamRepository.save(team);
+        teamEmitter.emit(TEAM_EVENTS.UPDATED, savedTeam);
+        return savedTeam;
     }
 
     async delete(id: string, actor?: ActorInfo) {
@@ -249,7 +256,9 @@ export class ProjectTeamService {
         // Important: Should we delete members first? TypeORM might handle it if cascade is set, 
         // but let's be safe.
         await this.memberRepository.delete(SecurityService.withTenant({ team: { id: id } }));
-        return await this.teamRepository.remove(team);
+        const removedTeam = await this.teamRepository.remove(team);
+        teamEmitter.emit(TEAM_EVENTS.DELETED, { id });
+        return removedTeam;
     }
 
     async addMember(teamId: string, userId: string, role?: MemberRole, actor?: ActorInfo, roles?: MemberRole[]) {
@@ -289,6 +298,7 @@ export class ProjectTeamService {
         member.roles = [...(member.roles || []), ...newRoles];
         if (requestedRoles.includes(MemberRole.ACCOUNT)) await this.syncAccountRoleAsLead(member);
         if (isNewMember) await this.notifyMemberAddedToProject(teamId, user, actor);
+        teamEmitter.emit(TEAM_EVENTS.MEMBER_ADDED, { ...member, teamId });
         return member;
     }
 
@@ -366,6 +376,7 @@ export class ProjectTeamService {
             await this.teamRepository.save(team);
         }
 
+        teamEmitter.emit(TEAM_EVENTS.MEMBER_UPDATED, { ...savedMembership, teamId });
         return [savedMembership];
     }
 
@@ -396,6 +407,9 @@ export class ProjectTeamService {
         } else if (member.team && member.team.teamLead && member.user.id === member.team.teamLead.id) {
             throw new Error("Không thể xóa thành viên đang là Team Lead. Vui lòng chỉ định Lead mới trước khi xóa.");
         }
-        return await this.memberRepository.remove(member);
+        const teamId = member.team.id;
+        const removedMember = await this.memberRepository.remove(member);
+        teamEmitter.emit(TEAM_EVENTS.MEMBER_REMOVED, { id: memberId, teamId });
+        return removedMember;
     }
 }

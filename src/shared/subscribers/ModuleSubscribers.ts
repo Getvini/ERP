@@ -3,8 +3,13 @@ import { quotationEmitter, QUOTATION_EVENTS } from "../../modules/quotation/even
 import { taskEmitter, TASK_EVENTS } from "../../modules/task/events/TaskEmitter";
 import { contractEmitter, CONTRACT_EVENTS } from "../../modules/contract/events/ContractEmitter";
 import { projectEmitter, PROJECT_EVENTS } from "../../modules/project/events/ProjectEmitter";
+import { teamEmitter, TEAM_EVENTS } from "../../modules/project/events/TeamEmitter";
 import { taskReviewEmitter, TASK_REVIEW_EVENTS } from "../../modules/task/events/TaskReviewEmitter";
 import { taskResultCheckEmitter, TASK_RESULT_CHECK_EVENTS } from "../../modules/task/events/TaskResultCheckEmitter";
+import { customerEmitter, CUSTOMER_EVENTS } from "../../modules/customer/events/CustomerEmitter";
+import { userEmitter, USER_EVENTS } from "../../modules/user/events/UserEmitter";
+import { acceptanceEmitter, ACCEPTANCE_EVENTS } from "../../modules/acceptance/events/AcceptanceEmitter";
+import { contractAddendumEmitter, CONTRACT_ADDENDUM_EVENTS } from "../../modules/contract-addendum/events/ContractAddendumEmitter";
 import { notificationEmitter, NOTIFICATION_EVENTS } from "../../modules/notification/events/NotificationEmitter";
 
 const emitModuleEvent = (event: string, payload: any) => {
@@ -108,6 +113,79 @@ export const initModuleSubscribers = () => {
     projectEmitter.on(PROJECT_EVENTS.DELETED, (data) => {
         // console.log(`[EVENT] Project Deleted: ${data.id}`);
         emitModuleEvent(PROJECT_EVENTS.DELETED, data);
+    });
+
+    // --- CUSTOMER EVENTS ---
+    customerEmitter.on(CUSTOMER_EVENTS.CREATED, (data) => {
+        emitModuleEvent(CUSTOMER_EVENTS.CREATED, data);
+    });
+    customerEmitter.on(CUSTOMER_EVENTS.UPDATED, (data) => {
+        emitModuleEvent(CUSTOMER_EVENTS.UPDATED, data);
+    });
+    customerEmitter.on(CUSTOMER_EVENTS.DELETED, (data) => {
+        emitModuleEvent(CUSTOMER_EVENTS.DELETED, data);
+    });
+
+    // --- USER EVENTS ---
+    userEmitter.on(USER_EVENTS.CREATED, (data) => {
+        emitModuleEvent(USER_EVENTS.CREATED, data);
+    });
+    userEmitter.on(USER_EVENTS.UPDATED, (data) => {
+        emitModuleEvent(USER_EVENTS.UPDATED, data);
+    });
+    userEmitter.on(USER_EVENTS.DELETED, (data) => {
+        emitModuleEvent(USER_EVENTS.DELETED, data);
+    });
+
+    // --- TEAM EVENTS ---
+    teamEmitter.on(TEAM_EVENTS.CREATED, (data) => {
+        emitModuleEvent(TEAM_EVENTS.CREATED, data);
+    });
+    teamEmitter.on(TEAM_EVENTS.UPDATED, (data) => {
+        emitModuleEvent(TEAM_EVENTS.UPDATED, data);
+    });
+    teamEmitter.on(TEAM_EVENTS.DELETED, (data) => {
+        emitModuleEvent(TEAM_EVENTS.DELETED, data);
+    });
+    teamEmitter.on(TEAM_EVENTS.MEMBER_ADDED, (data) => {
+        emitModuleEvent(TEAM_EVENTS.MEMBER_ADDED, data);
+    });
+    teamEmitter.on(TEAM_EVENTS.MEMBER_UPDATED, (data) => {
+        emitModuleEvent(TEAM_EVENTS.MEMBER_UPDATED, data);
+    });
+    teamEmitter.on(TEAM_EVENTS.MEMBER_REMOVED, (data) => {
+        emitModuleEvent(TEAM_EVENTS.MEMBER_REMOVED, data);
+    });
+
+    // --- ACCEPTANCE EVENTS ---
+    acceptanceEmitter.on(ACCEPTANCE_EVENTS.CREATED, (data) => {
+        emitModuleEvent(ACCEPTANCE_EVENTS.CREATED, data);
+    });
+    acceptanceEmitter.on(ACCEPTANCE_EVENTS.APPROVED, (data) => {
+        emitModuleEvent(ACCEPTANCE_EVENTS.APPROVED, data);
+    });
+    acceptanceEmitter.on(ACCEPTANCE_EVENTS.REJECTED, (data) => {
+        emitModuleEvent(ACCEPTANCE_EVENTS.REJECTED, data);
+    });
+    acceptanceEmitter.on(ACCEPTANCE_EVENTS.PROCESSED, (data) => {
+        emitModuleEvent(ACCEPTANCE_EVENTS.PROCESSED, data);
+    });
+
+    // --- CONTRACT ADDENDUM EVENTS ---
+    contractAddendumEmitter.on(CONTRACT_ADDENDUM_EVENTS.CREATED, (data) => {
+        emitModuleEvent(CONTRACT_ADDENDUM_EVENTS.CREATED, data);
+    });
+    contractAddendumEmitter.on(CONTRACT_ADDENDUM_EVENTS.UPDATED, (data) => {
+        emitModuleEvent(CONTRACT_ADDENDUM_EVENTS.UPDATED, data);
+    });
+    contractAddendumEmitter.on(CONTRACT_ADDENDUM_EVENTS.SIGNED, (data) => {
+        emitModuleEvent(CONTRACT_ADDENDUM_EVENTS.SIGNED, data);
+    });
+    contractAddendumEmitter.on(CONTRACT_ADDENDUM_EVENTS.REJECTED, (data) => {
+        emitModuleEvent(CONTRACT_ADDENDUM_EVENTS.REJECTED, data);
+    });
+    contractAddendumEmitter.on(CONTRACT_ADDENDUM_EVENTS.APPROVED, (data) => {
+        emitModuleEvent(CONTRACT_ADDENDUM_EVENTS.APPROVED, data);
     });
 
     // --- TASK REVIEW EVENTS ---
