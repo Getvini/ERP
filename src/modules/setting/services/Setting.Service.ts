@@ -8,6 +8,8 @@ import {
     QcConfig,
     isValidQcConfig,
 } from "../constants/qc";
+import { WorkloadNormService } from "../../../shared/services/WorkloadNorm.Service";
+import { UserRole } from "../../account/entities/Account.entity";
 
 type Actor = { id?: string; userId?: string; role?: string };
 
@@ -19,6 +21,7 @@ function httpError(message: string, statusCode: number) {
 
 export class SettingService {
     private repository = AppDataSource.getRepository(SystemSettings);
+    private workloadNormService = new WorkloadNormService();
 
     getQcOptions() {
         return {
@@ -69,5 +72,13 @@ export class SettingService {
         });
 
         return this.getQcConfig();
+    }
+
+    getWorkloadNorms() {
+        return this.workloadNormService.getNorms();
+    }
+
+    updateWorkloadNorms(input: { role: UserRole; monthlyNorm: number }[], actor?: Actor) {
+        return this.workloadNormService.updateNorms(input, actor);
     }
 }

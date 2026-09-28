@@ -57,6 +57,7 @@ import { AiElementVideos } from "./modules/ai-element/entities/AiElementVideo.en
 import { Documents } from "./modules/document-library/entities/Document.entity"
 import { DocumentVersions } from "./modules/document-library/entities/DocumentVersion.entity"
 import { SystemSettings } from "./modules/setting/entities/SystemSetting.entity"
+import { StaffRoleWorkloadNorms } from "./modules/setting/entities/StaffRoleWorkloadNorm.entity"
 import { ChatRooms } from "./modules/chat-room/entities/ChatRoom.entity"
 import { ChatParticipants } from "./modules/chat-room/entities/ChatParticipant.entity"
 import { ChatMessages } from "./modules/chat-room/entities/ChatMessage.entity"
@@ -148,6 +149,7 @@ export const AppDataSource = new DataSource({
         AiElementImages,
         AiElementVideos,
         SystemSettings,
+        StaffRoleWorkloadNorms,
         ChatRooms,
         ChatParticipants,
         ChatMessages,

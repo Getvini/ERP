@@ -23,4 +23,22 @@ export class SettingController {
             res.status(error.statusCode || 500).json({ message: error.message });
         }
     };
+
+    getWorkloadNorms = async (_req: AuthRequest, res: Response) => {
+        try {
+            const norms = await this.service.getWorkloadNorms();
+            res.status(200).json({ norms });
+        } catch (error: any) {
+            res.status(error.statusCode || 500).json({ message: error.message });
+        }
+    };
+
+    updateWorkloadNorms = async (req: AuthRequest, res: Response) => {
+        try {
+            const norms = await this.service.updateWorkloadNorms(req.body?.norms, req.user);
+            res.status(200).json({ norms });
+        } catch (error: any) {
+            res.status(error.statusCode || 500).json({ message: error.message });
+        }
+    };
 }

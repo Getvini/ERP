@@ -3,7 +3,8 @@ import { AppDataSource } from "../../data-source";
 import { Accounts, STAFF_ROLES, UserRole } from "../../modules/account/entities/Account.entity";
 import { Tasks } from "../../modules/task/entities/Task.entity";
 import { Users } from "../../modules/user/entities/User.entity";
-import { PerformerType, TaskStatus } from "../entities/Enums";
+import { PerformerType } from "../entities/Enums";
+import { WorkloadNormService } from "./WorkloadNorm.Service";
 
 export type WorkloadSummary = {
     userId: string;
@@ -22,11 +23,11 @@ export type StaffWorkloadSummary = WorkloadSummary & {
 };
 
 export class WorkloadService {
-    static readonly MONTHLY_KPI_VINICOIN = 2500;
     static readonly MAX_DISPLAY_RATIO = 2;
 
     private taskRepository = AppDataSource.getRepository(Tasks);
     private userRepository = AppDataSource.getRepository(Users);
+    private workloadNormService = new WorkloadNormService();
 
     private getMonthRange(month?: number, year?: number) {
         const now = new Date();
@@ -37,13 +38,13 @@ export class WorkloadService {
         return { start, end };
     }
 
-    private buildSummary(userId: string, pendingVinicoin = 0, taskCount = 0): WorkloadSummary {
-        const rawRatio = pendingVinicoin / WorkloadService.MONTHLY_KPI_VINICOIN;
+    private buildSummary(userId: string, monthlyNorm: number, pendingVinicoin = 0, taskCount = 0): WorkloadSummary {
+        const rawRatio = monthlyNorm > 0 ? pendingVinicoin / monthlyNorm : 0;
         const displayRatio = Math.min(rawRatio, WorkloadService.MAX_DISPLAY_RATIO);
 
         return {
             userId,
-            kpi: WorkloadService.MONTHLY_KPI_VINICOIN,
+            kpi: monthlyNorm,
             pendingVinicoin,
             rawRatio,
             displayRatio,
@@ -70,11 +71,17 @@ export class WorkloadService {
             },
             relations: ["accounts"]
         });
-        const staffUserIds = users
-            .filter(user => this.getStaffRole(user.accounts))
-            .map(user => user.id);
+        const staffUsers = users
+            .map(user => ({ user, role: this.getStaffRole(user.accounts) }))
+            .filter((item): item is { user: Users; role: UserRole } => Boolean(item.role));
+        const staffUserIds = staffUsers.map(item => item.user.id);
+        const normMap = await this.workloadNormService.getNormMap(staffUsers.map(item => item.role));
+        const userRoleMap = new Map(staffUsers.map(item => [item.user.id, item.role]));
 
-        staffUserIds.forEach(userId => workloads.set(userId, this.buildSummary(userId)));
+        staffUsers.forEach(({ user, role }) => {
+            const monthlyNorm = normMap.get(role)?.monthlyNorm || WorkloadNormService.DEFAULT_MONTHLY_NORM;
+            workloads.set(user.id, this.buildSummary(user.id, monthlyNorm));
+        });
         if (staffUserIds.length === 0) return workloads;
 
         const { start, end } = this.getMonthRange(month, year);
@@ -87,23 +94,21 @@ export class WorkloadService {
             .where("task.assigneeId IN (:...staffUserIds)", { staffUserIds })
             .andWhere("task.plannedEndDate BETWEEN :start AND :end", { start, end })
             .andWhere("task.performerType = :performerType", { performerType: PerformerType.INTERNAL })
-            // Không tính workload cho task đã nghiệm thu, đang tạm dừng (dự án ON_HOLD)
-            // hoặc đã bị hủy khi đóng dự án — nếu không KPI tháng sẽ bị đội lên sai.
-            .andWhere("task.status NOT IN (:...excludedStatuses)", {
-                excludedStatuses: [
-                    TaskStatus.ACCEPTED,
-                    TaskStatus.ON_HOLD,
-                    TaskStatus.CANCELLED
-                ]
+            .andWhere("task.status IN (:...activeStatuses)", {
+                activeStatuses: WorkloadNormService.ACTIVE_WORKLOAD_STATUSES
             })
             .groupBy("task.assigneeId")
             .getRawMany();
 
         rows.forEach(row => {
             const userId = row.userId;
+            const role = userRoleMap.get(userId);
+            const monthlyNorm = role
+                ? normMap.get(role)?.monthlyNorm || WorkloadNormService.DEFAULT_MONTHLY_NORM
+                : WorkloadNormService.DEFAULT_MONTHLY_NORM;
             const pendingVinicoin = Number(row.pendingVinicoin || 0);
             const taskCount = Number(row.taskCount || 0);
-            workloads.set(userId, this.buildSummary(userId, pendingVinicoin, taskCount));
+            workloads.set(userId, this.buildSummary(userId, monthlyNorm, pendingVinicoin, taskCount));
         });
 
         return workloads;
@@ -132,7 +137,10 @@ export class WorkloadService {
         return staffUsers.map(({ user, role }) => ({
             fullName: user.fullName,
             role,
-            ...(workloads.get(user.id) || this.buildSummary(user.id))
+            ...(workloads.get(user.id) || this.buildSummary(
+                user.id,
+                WorkloadNormService.DEFAULT_MONTHLY_NORM
+            ))
         }));
     }
 }

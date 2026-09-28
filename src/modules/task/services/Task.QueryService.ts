@@ -16,12 +16,15 @@ import { SecurityService } from "../../../shared/services/Security.Service";
 import { ContractServices, ContractServiceStatus } from "../../contract/entities/ContractService.entity";
 import { Violations } from "../entities/Violation.entity";
 import { taskEmitter, TASK_EVENTS } from "../events/TaskEmitter";
-import { isManagementRole, UserRole } from "../../account/entities/Account.entity";
+import { isManagementRole, STAFF_ROLES, UserRole } from "../../account/entities/Account.entity";
 import { MemberRole } from "../../project/entities/TeamMember.entity";
+import { WorkloadNormService } from "../../../shared/services/WorkloadNorm.Service";
 
 import { TaskBaseService } from "./Task.BaseService";
 
 export class TaskQueryService extends TaskBaseService {
+    private workloadNormService = new WorkloadNormService();
+
     private formatDateKey(date: Date) {
         const year = date.getFullYear();
         const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -245,17 +248,18 @@ export class TaskQueryService extends TaskBaseService {
             throw this.httpError("Ngày bắt đầu không được lớn hơn ngày kết thúc", 400);
         }
 
-        const excludedStatuses = [
-            TaskStatus.INTERNAL_COMPLETED,
-            TaskStatus.COMPLETED,
-            TaskStatus.ACCEPTED,
-            TaskStatus.CANCELLED,
-            TaskStatus.ON_HOLD,
-            TaskStatus.AWAITING_PRICING
-        ];
+        const user = await this.userRepository.findOne({
+            where: { id: userId },
+            relations: ["accounts"]
+        });
+        const staffRole = user?.accounts?.find(account => STAFF_ROLES.includes(account.role))?.role;
+        const norm = await this.workloadNormService.getNormForRole(staffRole);
+        const monthlyNorm = norm?.monthlyNorm || WorkloadNormService.DEFAULT_MONTHLY_NORM;
+        const dailyNorm = WorkloadNormService.getDailyNorm(monthlyNorm);
 
         const tasks = await this.taskRepository
             .createQueryBuilder("task")
+            .leftJoinAndSelect("task.job", "job")
             .select([
                 "task.id",
                 "task.code",
@@ -263,7 +267,9 @@ export class TaskQueryService extends TaskBaseService {
                 "task.nickname",
                 "task.status",
                 "task.plannedStartDate",
-                "task.plannedEndDate"
+                "task.plannedEndDate",
+                "job.id",
+                "job.vinicoin"
             ])
             .where("task.assigneeId = :userId", { userId })
             .andWhere("task.performerType = :performerType", { performerType: PerformerType.INTERNAL })
@@ -271,14 +277,23 @@ export class TaskQueryService extends TaskBaseService {
             .andWhere("task.plannedEndDate IS NOT NULL")
             .andWhere("task.plannedStartDate <= :end", { end })
             .andWhere("task.plannedEndDate >= :start", { start })
-            .andWhere("task.status NOT IN (:...excludedStatuses)", { excludedStatuses })
+            .andWhere("task.status IN (:...activeStatuses)", {
+                activeStatuses: WorkloadNormService.ACTIVE_WORKLOAD_STATUSES
+            })
             .orderBy("task.plannedEndDate", "ASC")
             .getMany();
 
         const days: {
             date: string;
             taskCount: number;
-            tasks: Pick<Tasks, "id" | "code" | "name" | "nickname" | "status" | "plannedStartDate" | "plannedEndDate">[];
+            workloadValue: number;
+            dailyNorm: number;
+            workloadRatio: number;
+            workloadPercent: number;
+            tasks: (Pick<Tasks, "id" | "code" | "name" | "nickname" | "status" | "plannedStartDate" | "plannedEndDate"> & {
+                vinicoin: number;
+                workloadRatio: number;
+            })[];
         }[] = [];
 
         for (const cursor = this.startOfDay(start); cursor <= end; cursor.setDate(cursor.getDate() + 1)) {
@@ -287,19 +302,31 @@ export class TaskQueryService extends TaskBaseService {
             const overlappingTasks = tasks.filter(task =>
                 task.plannedStartDate <= dayEnd && task.plannedEndDate >= dayStart
             );
-
-            days.push({
-                date: this.formatDateKey(dayStart),
-                taskCount: overlappingTasks.length,
-                tasks: overlappingTasks.map(task => ({
+            const taskItems = overlappingTasks.map(task => {
+                const vinicoin = Number(task.job?.vinicoin || 0);
+                return {
                     id: task.id,
                     code: task.code,
                     name: task.name,
                     nickname: task.nickname,
                     status: task.status,
                     plannedStartDate: task.plannedStartDate,
-                    plannedEndDate: task.plannedEndDate
-                }))
+                    plannedEndDate: task.plannedEndDate,
+                    vinicoin,
+                    workloadRatio: dailyNorm > 0 ? vinicoin / dailyNorm : 0
+                };
+            });
+            const workloadValue = taskItems.reduce((sum, task) => sum + task.vinicoin, 0);
+            const workloadRatio = dailyNorm > 0 ? workloadValue / dailyNorm : 0;
+
+            days.push({
+                date: this.formatDateKey(dayStart),
+                taskCount: overlappingTasks.length,
+                workloadValue,
+                dailyNorm,
+                workloadRatio,
+                workloadPercent: Math.round(workloadRatio * 100),
+                tasks: taskItems
             });
         }
 
@@ -307,6 +334,9 @@ export class TaskQueryService extends TaskBaseService {
             userId,
             startDate: this.formatDateKey(start),
             endDate: this.formatDateKey(end),
+            role: staffRole || null,
+            monthlyNorm,
+            dailyNorm,
             days
         };
     }
