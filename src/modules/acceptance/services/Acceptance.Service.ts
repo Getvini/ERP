@@ -20,6 +20,7 @@ import { NotificationService } from "../../notification/services/Notification.Se
 import { VinicoinService } from "../../../shared/services/Vinicoin.Service";
 import { EntityManager, In, Not, ILike } from "typeorm";
 import { UserRole } from "../../account/entities/Account.entity";
+import { MemberRole, memberHasRole } from "../../project/entities/TeamMember.entity";
 
 type AcceptanceActor = { userId?: string; role?: string };
 
@@ -101,22 +102,41 @@ export class AcceptanceService {
 
   async createRequest(data: {
     serviceIds: string[];
-    userId: string;
-    name: string;
     projectId: string;
     note?: string;
+    actor?: AcceptanceActor;
   }) {
-    const { serviceIds, userId, name, projectId, note } = data;
+    const { serviceIds, projectId, note, actor } = data;
+
+    if (!actor?.userId) {
+      throw this.httpError("Bạn cần đăng nhập bằng tài khoản nhân sự để gửi nghiệm thu", 401);
+    }
 
     if (!Array.isArray(serviceIds) || serviceIds.length === 0) {
       throw new Error("Danh sách dịch vụ không hợp lệ hoặc trống");
     }
 
-    const requester = await this.userRepo.findOneBy({ id: userId });
+    const requester = await this.userRepo.findOneBy({ id: actor.userId });
     if (!requester) throw new Error("Người yêu cầu không tồn tại");
 
-    const project = await this.projectRepo.findOneBy({ id: projectId });
+    const project = await this.projectRepo.findOne({
+      where: { id: projectId },
+      relations: ["team", "team.members", "team.members.user", "team.members.roles"],
+    });
     if (!project) throw new Error("Dự án không tồn tại");
+
+    const canSendAcceptance = [
+      UserRole.ADMIN,
+      UserRole.BOD,
+      UserRole.ADMIN_SALE,
+    ].includes(actor.role as UserRole) || Boolean(project.team?.members?.some(
+      (member) => member.user?.id === actor.userId &&
+        memberHasRole(member, MemberRole.PROJECT_MANAGER),
+    ));
+
+    if (!canSendAcceptance) {
+      throw this.httpError("Bạn không có quyền gửi yêu cầu nghiệm thu cho dự án này", 403);
+    }
 
     if ([ProjectStatus.COMPLETED, ProjectStatus.CANCELLED].includes(project.status)) {
       throw this.httpError("Dự án đã hoàn tất hoặc đã đóng, không thể gửi yêu cầu nghiệm thu", 400);
@@ -229,7 +249,7 @@ export class AcceptanceService {
     for (const bod of bods) {
       await this.notificationService.createNotification({
         title: "Yêu cầu nghiệm thu mới",
-        content: `Team Lead ${requester.fullName} yêu cầu nghiệm thu đợt: ${name} của dự án ${request.project?.name}`,
+        content: `${requester.fullName} yêu cầu nghiệm thu đợt: ${autoName} của dự án ${request.project?.name}`,
         type: "ACCEPTANCE_REQUESTED",
         recipient: bod,
         relatedEntityId: savedRequest.id,

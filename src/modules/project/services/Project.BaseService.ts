@@ -536,6 +536,7 @@ export class ProjectBaseService {
                 "team",
                 "team.teamLead",
                 "team.members",
+                "team.members.roles",
                 "team.members.user",
                 "team.members.user.accounts",
                 "confirmedBy"

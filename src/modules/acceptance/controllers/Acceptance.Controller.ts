@@ -6,16 +6,13 @@ export class AcceptanceController {
 
   createRequest = async (req: Request, res: Response) => {
     try {
-      const userId = (req as any).user?.userId || req.body.userId; // Prefer profile userId
-      if (!userId) throw new Error("Unauthorized: Missing user information");
-
       const result = await this.acceptanceService.createRequest({
         ...req.body,
-        userId,
+        actor: (req as any).user,
       });
       res.status(201).json(result);
-    } catch (error) {
-      res.status(500).json({ message: error.message });
+    } catch (error: any) {
+      res.status(error.statusCode || 500).json({ message: error.message });
     }
   };
 
