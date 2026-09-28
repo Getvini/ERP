@@ -759,10 +759,13 @@ export class ContractService {
             where: { id },
             relations: ["project", "customer", "opportunity", "milestones", "services", "debts"]
         });
-        if (!contract) throw new Error("Không tìm thấy hợp đồng");
+        if (!contract) throw this.httpError("Không tìm thấy hợp đồng", 404);
 
+        if (contract.signed_contract) {
+            throw this.httpError("Hợp đồng đã có bản ký, không thể upload lại", 409);
+        }
         if (contract.status !== ContractStatus.PROPOSAL_APPROVED) {
-            throw new Error("Hợp đồng cần được duyệt trước khi upload bản ký");
+            throw this.httpError("Hợp đồng cần được duyệt trước khi upload bản ký", 409);
         }
 
         contract.signed_contract = fileData.url;

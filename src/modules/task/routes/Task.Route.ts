@@ -37,6 +37,7 @@ router.put("/:id", taskController.update);
 router.put("/:id/assign", validationMiddleware(TaskAssignmentDTO), taskController.assign);
 router.patch("/:id/submit-result", taskController.submitResult);
 router.patch("/:id/submit-result-file", upload.single("file"), taskController.submitResultFile);
+router.patch("/:id/submit-result-review", taskController.submitResultForReview);
 router.delete("/:id", taskController.delete);
 router.patch("/:id/reassign", taskController.reassign);
 router.post("/:id/pricing", taskController.assessExtraTask);

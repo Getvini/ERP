@@ -19,6 +19,13 @@ const isAllowedProposalFile = (file: any) => {
     return /\.(docx|pdf)$/i.test(fileName) && (!format || ["docx", "pdf"].includes(format));
 };
 
+const isAllowedSignedFile = (file: any) => {
+    const fileName = typeof file?.name === "string" ? file.name.trim() : "";
+    const format = typeof file?.format === "string" ? file.format.trim().toLowerCase() : "";
+
+    return /\.pdf$/i.test(fileName) && (!format || format === "pdf");
+};
+
 export class ContractController {
     private contractService = new ContractService();
     private milestoneService = new PaymentMilestoneService();
@@ -29,8 +36,8 @@ export class ContractController {
             const filters = req.query;
             const contracts = await this.contractService.getAll(filters, userInfo);
             res.status(200).json(contracts);
-        } catch (error) {
-            res.status(500).json({ message: error.message });
+        } catch (error: any) {
+            res.status(error.statusCode || 500).json({ message: error.message });
         }
     }
 
@@ -146,12 +153,18 @@ export class ContractController {
             if (!file) {
                 return res.status(400).json({ message: "Không tìm thấy file metadata" });
             }
+            if (!isAllowedSignedFile(file)) {
+                return res.status(400).json({ message: "Chỉ chấp nhận file hợp đồng đã ký định dạng .pdf" });
+            }
+            if (!file.url || !isHttpUrl(file.url)) {
+                return res.status(400).json({ message: "Link file hợp đồng đã ký không hợp lệ" });
+            }
 
             const userInfo = (req as any).user;
             const contract = await this.contractService.uploadSigned(req.params.id as string, file, userInfo);
             res.status(200).json(contract);
-        } catch (error) {
-            res.status(500).json({ message: error.message });
+        } catch (error: any) {
+            res.status(error.statusCode || 500).json({ message: error.message });
         }
     }
 

@@ -141,7 +141,7 @@ export class TaskController {
         try {
             const taskId = req.params.id as string;
             // result is now pre-uploaded and sent in body
-            const { result: bodyResult, link, sheetNames, whitelist, scenarioIds, scenarioLabels, checkFileUrl, checkFileName } = req.body;
+            const { result: bodyResult, link, sheetNames, whitelist, scenarioIds, scenarioLabels, checkFileUrl, checkFileName, draft } = req.body;
             let resultData: any = null;
 
             if (bodyResult && (bodyResult.type === "CHECKLIST" || bodyResult.type === "CONFIRMATION")) {
@@ -180,7 +180,8 @@ export class TaskController {
                 scenarioIds: Array.isArray(scenarioIds) ? scenarioIds : undefined,
                 scenarioLabels: Array.isArray(scenarioLabels) ? scenarioLabels : undefined,
                 checkFileUrl,
-                checkFileName
+                checkFileName,
+                draft: draft === true || draft === "true"
             }, user);
             res.status(200).json(result);
         } catch (error: any) {
@@ -226,8 +227,19 @@ export class TaskController {
                 whitelist,
                 scenarioIds,
                 scenarioLabels,
-                fileBuffer
+                fileBuffer,
+                draft: req.body.draft === true || req.body.draft === "true"
             }, user);
+            res.status(200).json(result);
+        } catch (error: any) {
+            res.status(error.statusCode || 500).json({ message: error.message });
+        }
+    }
+
+    submitResultForReview = async (req: Request, res: Response) => {
+        try {
+            const user = (req as any).user;
+            const result = await this.taskService.submitSavedResultForReview(req.params.id as string, user);
             res.status(200).json(result);
         } catch (error: any) {
             res.status(error.statusCode || 500).json({ message: error.message });

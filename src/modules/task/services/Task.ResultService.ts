@@ -41,6 +41,7 @@ type SubmitResultData = {
     fileBuffer?: Buffer;
     checkFileUrl?: string;
     checkFileName?: string;
+    draft?: boolean;
 };
 
 function buildSubmissionDetails(sheetNames?: string[], scenarioLabels?: string[]): string {
@@ -70,10 +71,6 @@ export class TaskResultService extends TaskBaseService {
         await assertSubtasksCompleted(this.taskRepository, task, "nộp kết quả");
         const currentId = await this.resolveActorUserId(currentUser);
         if (!currentId) throw this.httpError("Tài khoản chưa được liên kết nhân sự để nộp kết quả", 401);
-        // Chỉ tự động duyệt khi chính người nộp cũng có quyền quyết định kết quả.
-        // Hàm dùng chung bên dưới luôn loại người thực hiện/helper khỏi quyền này.
-        const shouldAutoApprove = canDecideTaskOutcome(task, currentId);
-
         const resultType = data.result?.type;
         if (!data.result || ((resultType === "FILE" || resultType === "LINK") && !data.result.url)) {
             throw this.httpError("Kết quả công việc không hợp lệ", 400);
@@ -82,11 +79,62 @@ export class TaskResultService extends TaskBaseService {
         task.result = {
             ...data.result,
             sheetNames: data.sheetNames && data.sheetNames.length > 0 ? data.sheetNames : undefined,
-            scenarioLabels: data.scenarioLabels && data.scenarioLabels.length > 0 ? data.scenarioLabels : undefined
+            scenarioLabels: data.scenarioLabels && data.scenarioLabels.length > 0 ? data.scenarioLabels : undefined,
+            checkFileUrl: data.checkFileUrl,
+            checkFileName: data.checkFileName
         };
-        task.actualEndDate = new Date();
         task.lastSubmittedById = currentId;
 
+        const savedTask = await this.taskRepository.save(task);
+
+        if (data.draft) {
+            taskEmitter.emit(TASK_EVENTS.UPDATED, savedTask);
+            return savedTask;
+        }
+
+        return this.submitSavedResultForReview(id, currentUser, {
+            fileBuffer: data.fileBuffer,
+            sheetNames: data.sheetNames,
+            whitelist: data.whitelist,
+            scenarioIds: data.scenarioIds,
+            scenarioLabels: data.scenarioLabels,
+            checkFileUrl: data.checkFileUrl,
+            checkFileName: data.checkFileName
+        });
+    }
+
+    async submitSavedResultForReview(
+        id: string,
+        currentUser?: { id: string, userId?: string; role?: string },
+        checkOptions: Omit<SubmitResultData, "result" | "draft"> = {}
+    ) {
+        const task = await this.getOne(id);
+        this.assertTaskProjectNotOnHold(task);
+        const submittableStatuses = [
+            TaskStatus.DOING,
+            TaskStatus.REJECTED,
+            TaskStatus.REWORKING,
+            TaskStatus.OVERDUE
+        ];
+        if (!submittableStatuses.includes(task.status)) {
+            throw this.httpError("Công việc phải được bắt đầu trước khi gửi duyệt kết quả", 409);
+        }
+        await assertSubtaskPlanApproved(this.taskRepository, task, "gửi duyệt kết quả");
+        await assertSubtasksCompleted(this.taskRepository, task, "gửi duyệt kết quả");
+        const currentId = await this.resolveActorUserId(currentUser);
+        if (!currentId) throw this.httpError("Tài khoản chưa được liên kết nhân sự để gửi duyệt kết quả", 401);
+
+        const resultType = task.result?.type;
+        if (!task.result || ((resultType === "FILE" || resultType === "LINK") && !task.result.url)) {
+            throw this.httpError("Vui lòng upload hoặc nhập kết quả trước khi gửi duyệt", 400);
+        }
+
+        // Chỉ tự động duyệt khi chính người nộp cũng có quyền quyết định kết quả.
+        // Hàm dùng chung bên dưới luôn loại người thực hiện/helper khỏi quyền này.
+        const shouldAutoApprove = canDecideTaskOutcome(task, currentId);
+
+        task.actualEndDate = new Date();
+        task.lastSubmittedById = currentId;
         task.status = TaskStatus.AWAITING_REVIEW;
 
         const savedTask = await this.taskRepository.save(task);
@@ -113,7 +161,9 @@ export class TaskResultService extends TaskBaseService {
         const recipientIds = getTaskSubmissionReviewRecipientIds(task, currentId);
         const isSelfAssigned = task.assignerId === task.assigneeId;
 
-        const submissionDetails = buildSubmissionDetails(data.sheetNames, data.scenarioLabels);
+        const sheetNames = checkOptions.sheetNames?.length ? checkOptions.sheetNames : task.result.sheetNames;
+        const scenarioLabels = checkOptions.scenarioLabels?.length ? checkOptions.scenarioLabels : task.result.scenarioLabels;
+        const submissionDetails = buildSubmissionDetails(sheetNames, scenarioLabels);
         for (const recipientId of recipientIds) {
             const recipient = await this.userRepository.findOneBy({ id: recipientId });
             if (recipient) {
@@ -137,15 +187,18 @@ export class TaskResultService extends TaskBaseService {
         taskEmitter.emit(TASK_EVENTS.STATUS_CHANGED, responseTask);
 
         if (resultType === "FILE" || resultType === "LINK") {
+            const resultMeta = task.result as any;
+            const checkFileUrl = checkOptions.checkFileUrl || resultMeta.checkFileUrl || task.result?.url;
+            const checkFileName = checkOptions.checkFileName || resultMeta.checkFileName || task.result?.name;
             void this.resultCheckService.startForSubmission({
                 taskId: task.id,
                 projectId: task.project?.id,
-                fileBuffer: data.fileBuffer,
-                fileUrl: data.fileBuffer ? undefined : (data.checkFileUrl || data.result?.url),
-                fileName: data.checkFileName || data.result?.name,
-                sheetNames: data.sheetNames || [],
-                whitelist: data.whitelist || [],
-                scenarioIds: data.scenarioIds || [],
+                fileBuffer: checkOptions.fileBuffer,
+                fileUrl: checkOptions.fileBuffer ? undefined : checkFileUrl,
+                fileName: checkFileName,
+                sheetNames: sheetNames || [],
+                whitelist: checkOptions.whitelist || [],
+                scenarioIds: checkOptions.scenarioIds || [],
                 actor: currentUser
             });
         }

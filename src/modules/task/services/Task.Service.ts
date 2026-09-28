@@ -77,6 +77,10 @@ export class TaskService {
         return this.resultService.submitResult(id, data, currentUser);
     }
 
+    submitSavedResultForReview(id: string, currentUser?: { id: string, userId?: string; role?: string }) {
+        return this.resultService.submitSavedResultForReview(id, currentUser);
+    }
+
     requestRework(id: string, data: Parameters<TaskResultService["requestRework"]>[1], currentUser?: { id: string, userId?: string; role?: string }) {
         return this.resultService.requestRework(id, data, currentUser);
     }
