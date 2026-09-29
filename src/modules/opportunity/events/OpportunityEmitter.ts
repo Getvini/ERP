@@ -10,5 +10,6 @@ export const OPPORTUNITY_EVENTS = {
     UPDATED: "opportunity_updated",
     APPROVED: "opportunity_approved",
     REJECTED: "opportunity_rejected",
+    RESUBMITTED: "opportunity_resubmitted",
     DELETED: "opportunity_deleted",
 };

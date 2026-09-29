@@ -6,6 +6,8 @@ import { Services } from "../../service/entities/Service.entity";
 import { ReferralPartners } from "../../referral-partner/entities/ReferralPartner.entity";
 import { Users } from "../../user/entities/User.entity";
 import { OpportunityPackages } from "../entities/OpportunityPackage.entity";
+import { OpportunityRejections } from "../entities/OpportunityRejection.entity";
+import { assertRejectedOpportunityEditable, stripProtectedOpportunityFields } from "../helpers/OpportunityResubmit.helper";
 import { ServicePackages } from "../../service-package/entities/ServicePackage.entity";
 import { Like, In, IsNull } from "typeorm";
 import { SecurityService } from "../../../shared/services/Security.Service";
@@ -26,6 +28,7 @@ export class OpportunityService {
     private referralPartnerRepository = AppDataSource.getRepository(ReferralPartners);
     private userRepository = AppDataSource.getRepository(Users);
     private opportunityPackageRepository = AppDataSource.getRepository(OpportunityPackages);
+    private opportunityRejectionRepository = AppDataSource.getRepository(OpportunityRejections);
     private opportunityServiceRepository = AppDataSource.getRepository(OpportunityServices);
     private opportunityServiceJobRepository = AppDataSource.getRepository(OpportunityServiceJobs);
     private taskRepository = AppDataSource.getRepository(Tasks);
@@ -231,8 +234,10 @@ export class OpportunityService {
                     "packages.services.jobs.tasks",
                     "quotations",
                     "contracts",
-                    "createdBy", "createdBy.accounts"
-                ]
+                    "createdBy", "createdBy.accounts",
+                    "rejections", "rejections.rejectedBy"
+                ],
+                order: { rejections: { rejectedAt: "DESC" } }
             });
             return opportunity;
         });
@@ -422,7 +427,7 @@ export class OpportunityService {
         if (customerType) updateObj.customerType = customerType;
 
         // Apply remaining simple fields
-        const allowedFields = ['name', 'description', 'field', 'expectedRevenue', 'budget', 'startDate', 'endDate', 'priority', 'successChance', 'region', 'durationMonths', 'status', 'partnerCommissionRate', 'expectedPartnerCommission', 'attachments'];
+        const allowedFields = ['name', 'description', 'field', 'expectedRevenue', 'budget', 'startDate', 'endDate', 'priority', 'successChance', 'region', 'durationMonths', 'partnerCommissionRate', 'expectedPartnerCommission', 'attachments'];
         for (const key of allowedFields) {
             if (rest[key] !== undefined) {
                 updateObj[key] = rest[key];
@@ -644,14 +649,20 @@ export class OpportunityService {
         return { message: "Duyệt cơ hội thành công", opportunity: result };
     }
 
-    async reject(id: string, reason: string) {
+    async reject(id: string, reason: string, userInfo?: { id: string, role: string, userId?: string, companyId?: string }) {
         const rejectionReason = reason?.trim();
 
         if (!rejectionReason) {
             throw new Error("Vui lòng nhập lý do không duyệt");
         }
 
-        const opportunity = await this.getOne(id);
+        const opportunity = await this.opportunityRepository.findOne({
+            where: SecurityService.withTenant({ id }, userInfo),
+            relations: ["createdBy"]
+        });
+        if (!opportunity) {
+            throw new Error("Không tìm thấy cơ hội kinh doanh");
+        }
 
         if (opportunity.status !== OpportunityStatus.PENDING_OPP_APPROVAL) {
             throw new Error("Chỉ có thể không duyệt cơ hội đang ở trạng thái chờ duyệt");
@@ -661,12 +672,102 @@ export class OpportunityService {
         opportunity.rejectionReason = rejectionReason;
         const result = await this.opportunityRepository.save(opportunity);
 
+        await this.opportunityRejectionRepository.save(this.opportunityRejectionRepository.create({
+            opportunityId: opportunity.id,
+            reason: rejectionReason,
+            rejectedById: userInfo?.userId || null,
+            rejectedAt: new Date(),
+            resubmittedAt: null,
+            ...SecurityService.getTenantWhere()
+        } as any));
+
         if (opportunity.createdBy) {
+            const sender = userInfo?.userId
+                ? await this.userRepository.findOne({ where: { id: userInfo.userId } }) || undefined
+                : undefined;
             await this.notificationService.createNotification({
                 title: "Cơ hội không được duyệt",
                 content: `Cơ hội "${opportunity.name}" (${opportunity.opportunityCode}) không được duyệt. Lý do: ${rejectionReason}`,
                 type: "OPPORTUNITY_REJECTED",
                 recipient: opportunity.createdBy,
+                sender,
+                relatedEntityId: opportunity.id,
+                relatedEntityType: "Opportunities",
+                link: `/opportunities/${opportunity.id}`
+            });
+        } else {
+            console.warn(`[OpportunityService] Opportunity ${opportunity.opportunityCode} has no creator, rejection notification skipped`);
+        }
+
+        await RedisService.deleteCache('opportunities:all*');
+        await RedisService.deleteCache(`opportunities:detail:${id}*`);
+
+        opportunityEmitter.emit(OPPORTUNITY_EVENTS.REJECTED, result);
+
+        return { message: "Không duyệt cơ hội thành công", opportunity: result };
+    }
+
+    private async findRejectedOpportunityForEdit(id: string, userInfo?: { id: string, role: string, userId?: string, companyId?: string }) {
+        const opportunity = await this.opportunityRepository.findOne({
+            where: SecurityService.withTenant({ id }, userInfo),
+            relations: ["createdBy", "customer"]
+        });
+        if (!opportunity) {
+            throw new Error("Không tìm thấy cơ hội kinh doanh");
+        }
+        assertRejectedOpportunityEditable(opportunity, userInfo);
+        return opportunity;
+    }
+
+    async saveDraft(id: string, data: any = {}, userInfo?: { id: string, role: string, userId?: string, companyId?: string }) {
+        await this.findRejectedOpportunityForEdit(id, userInfo);
+        return await this.update(id, stripProtectedOpportunityFields(data), userInfo);
+    }
+
+    async resubmit(id: string, userInfo?: { id: string, role: string, userId?: string, companyId?: string }) {
+        const opportunity = await this.findRejectedOpportunityForEdit(id, userInfo);
+
+        if (!opportunity.customer && !opportunity.leadName) {
+            throw new Error("Vui lòng bổ sung thông tin khách hàng trước khi gửi lại");
+        }
+
+        const now = new Date();
+        const pendingRejection = await this.opportunityRejectionRepository.findOne({
+            where: SecurityService.withTenant({ opportunityId: id, resubmittedAt: IsNull() }),
+            order: { rejectedAt: "DESC" }
+        });
+
+        if (pendingRejection) {
+            pendingRejection.resubmittedAt = now;
+            await this.opportunityRejectionRepository.save(pendingRejection);
+        } else if (opportunity.rejectionReason) {
+            await this.opportunityRejectionRepository.save(this.opportunityRejectionRepository.create({
+                opportunityId: id,
+                reason: opportunity.rejectionReason,
+                rejectedById: null,
+                rejectedAt: opportunity.updatedAt || now,
+                resubmittedAt: now,
+                ...SecurityService.getTenantWhere()
+            } as any));
+        }
+
+        opportunity.status = OpportunityStatus.PENDING_OPP_APPROVAL;
+        opportunity.rejectionReason = null as any;
+        await this.opportunityRepository.save(opportunity);
+
+        const managementUsers = await this.userRepository.find({
+            where: { accounts: { role: In([UserRole.BOD, UserRole.ADMIN]), ...(userInfo?.companyId ? { companyId: userInfo.companyId } : {}) } },
+            relations: ["accounts"]
+        });
+        const sender = opportunity.createdBy;
+        for (const user of managementUsers) {
+            if (sender && user.id === sender.id) continue;
+            await this.notificationService.createNotification({
+                title: "Cơ hội được gửi lại để duyệt",
+                content: `Cơ hội (${opportunity.opportunityCode})-${opportunity.name} đã được chỉnh sửa và gửi lại để duyệt.`,
+                type: "OPPORTUNITY_RESUBMITTED",
+                recipient: user,
+                sender,
                 relatedEntityId: opportunity.id,
                 relatedEntityType: "Opportunities",
                 link: `/opportunities/${opportunity.id}`
@@ -676,9 +777,10 @@ export class OpportunityService {
         await RedisService.deleteCache('opportunities:all*');
         await RedisService.deleteCache(`opportunities:detail:${id}*`);
 
-        opportunityEmitter.emit(OPPORTUNITY_EVENTS.REJECTED, result);
+        const freshData = await this.getOne(id);
+        opportunityEmitter.emit(OPPORTUNITY_EVENTS.RESUBMITTED, freshData);
 
-        return { message: "Không duyệt cơ hội thành công", opportunity: result };
+        return { message: "Đã gửi lại cơ hội để duyệt", opportunity: freshData };
     }
 
     private async notifyProjectManagersAboutVideoDemoTasks(opportunity: Opportunities, tasks: Tasks[]) {

@@ -36,6 +36,7 @@ import { AcceptanceRequests } from "./modules/acceptance/entities/AcceptanceRequ
 import { ServicePackages } from "./modules/service-package/entities/ServicePackage.entity"
 import { ServicePackageItems } from "./modules/service-package/entities/ServicePackageItem.entity"
 import { OpportunityPackages } from "./modules/opportunity/entities/OpportunityPackage.entity"
+import { OpportunityRejections } from "./modules/opportunity/entities/OpportunityRejection.entity"
 import { TaskIterations } from "./modules/task/entities/TaskIteration.entity"
 import { VinicoinTransactions } from "./modules/vinicoin/entities/VinicoinTransaction.entity"
 import { Violations } from "./modules/task/entities/Violation.entity"
@@ -131,6 +132,7 @@ export const AppDataSource = new DataSource({
         ServicePackages,
         ServicePackageItems,
         OpportunityPackages,
+        OpportunityRejections,
         TaskIterations,
         VinicoinTransactions,
         ServiceJob,

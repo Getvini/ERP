@@ -11,6 +11,8 @@ router.get("/", opportunityController.getAll);
 router.get("/:id", opportunityController.getOne);
 router.post("/", validationMiddleware(CreateOpportunityDTO), opportunityController.create);
 router.patch("/:id", validationMiddleware(UpdateOpportunityDTO), opportunityController.update);
+router.patch("/:id/draft", validationMiddleware(UpdateOpportunityDTO), opportunityController.saveDraft);
+router.patch("/:id/resubmit", opportunityController.resubmit);
 router.patch("/:id/addcustomer", roleMiddleware(["BOD", "ADMIN", "BD"]), opportunityController.addCustomer);
 router.patch("/:id/approve", roleMiddleware(["BOD", "ADMIN"]), opportunityController.approve);
 router.patch("/:id/reject", roleMiddleware(["BOD", "ADMIN"]), opportunityController.reject);

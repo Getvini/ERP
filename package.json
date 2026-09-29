@@ -47,7 +47,8 @@
       "test": "echo No test runner configured",
       "test:dashboard": "node --test -r ts-node/register src/modules/dashboard/**/*.spec.ts",
       "test:project-hold": "node --test -r ts-node/register src/modules/project/helpers/**/*.spec.ts",
-      "test:payment-request": "node --test -r ts-node/register src/modules/payment-request/**/*.spec.ts"
+      "test:payment-request": "node --test -r ts-node/register src/modules/payment-request/**/*.spec.ts",
+      "test:opportunity": "node --test -r ts-node/register src/modules/opportunity/**/*.spec.ts"
    },
    "devDependencies": {
       "@types/cookie-parser": "^1.4.10",

@@ -34,6 +34,12 @@ export const initModuleSubscribers = () => {
         // console.log(`[EVENT] Opportunity Approved: ${data.opportunityCode}`);
         emitModuleEvent(OPPORTUNITY_EVENTS.APPROVED, data);
     });
+    opportunityEmitter.on(OPPORTUNITY_EVENTS.REJECTED, (data) => {
+        emitModuleEvent(OPPORTUNITY_EVENTS.REJECTED, data);
+    });
+    opportunityEmitter.on(OPPORTUNITY_EVENTS.RESUBMITTED, (data) => {
+        emitModuleEvent(OPPORTUNITY_EVENTS.RESUBMITTED, data);
+    });
     opportunityEmitter.on(OPPORTUNITY_EVENTS.DELETED, (data) => {
         // console.log(`[EVENT] Opportunity Deleted: ${data.id}`);
         emitModuleEvent(OPPORTUNITY_EVENTS.DELETED, data);
