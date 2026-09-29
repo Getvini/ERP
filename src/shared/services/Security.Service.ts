@@ -85,8 +85,8 @@ export class SecurityService {
     static getContractFilters(userInfo: ActorInfo): any {
         const { id, role } = userInfo;
 
-        // Full access for internal management roles
-        if ([UserRole.BOD, UserRole.ADMIN, UserRole.ADMIN_SALE].includes(role as UserRole)) {
+        // Full read access for internal management roles, sales admin, and PM.
+        if ([UserRole.BOD, UserRole.ADMIN, UserRole.ADMIN_SALE, UserRole.PM].includes(role as UserRole)) {
             return SecurityService.getTenantWhere(userInfo);
         }
 
@@ -99,8 +99,8 @@ export class SecurityService {
             ], userInfo);
         }
 
-        // Staff and PM have no access to the contract list
-        if (isStaffRole(role) || role === UserRole.PM) {
+        // Staff have no access to the contract list
+        if (isStaffRole(role)) {
             throw new Error("FORBIDDEN_ACCESS");
         }
 
