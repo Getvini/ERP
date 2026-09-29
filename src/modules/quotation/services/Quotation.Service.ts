@@ -13,6 +13,7 @@ import { quotationEmitter, QUOTATION_EVENTS } from "../events/QuotationEmitter";
 import { opportunityEmitter, OPPORTUNITY_EVENTS } from "../../opportunity/events/OpportunityEmitter";
 import { ContractService } from "../../contract/services/Contract.Service";
 import { calculatePricingTotals, roundUnitSellingPrice } from "../../../shared/helpers/PricingTax.helper";
+import { title } from "node:process";
 
 type QuotationActor = { id: string, role: string, userId?: string, companyId?: string };
 
@@ -47,6 +48,32 @@ export class QuotationService {
 
     private async notifyManagement(data: { title: string, content: string, recipient?: string, quotationId: string, link?: string, relatedEntityId?: string, relatedEntityType?: string }) {
         await this.notifyRoles([UserRole.BOD, UserRole.ADMIN], data);
+    }
+
+    private async notifyUsers(
+        recipients: Users | Users[],
+        data: {
+            title: string;
+            content: string;
+            type: string;
+            link?: string;
+            relatedEntityId?: string;
+            relatedEntityType?: string;
+        }
+    ) {
+        const users = Array.isArray(recipients) ? recipients : [recipients];
+
+        for (const recipient of users) {
+            await this.notificationService.createNotification({
+            title: data.title,
+            content: data.content,
+            type: data.type,
+            recipient,
+            link: data.link,
+            relatedEntityId: data.relatedEntityId,
+            relatedEntityType: data.relatedEntityType,
+            });
+        }
     }
 
     private async notifyBod(data: { title: string, content: string, quotationId: string, link?: string, relatedEntityId?: string, relatedEntityType?: string }) {
@@ -511,6 +538,15 @@ export class QuotationService {
             link: `/opportunities/${opportunity.id}`,
             relatedEntityId: opportunity.id,
             relatedEntityType: "Opportunities"
+        });
+
+        await this.notifyUsers(opportunity.createdBy, {
+            title: "Báo giá đã duyệt",
+            content: `Báo giá lần ${quotation.version} cho cơ hội ${opportunity.opportunityCode}-${opportunity.name} đã được duyệt và tạo hợp đồng.`,
+            type: "QUOTATION_APPROVED",
+            link: `/opportunities/${opportunity.id}`,
+            relatedEntityId: opportunity.id,
+            relatedEntityType: "Opportunities",
         });
 
         quotationEmitter.emit(QUOTATION_EVENTS.APPROVED, quotation);
