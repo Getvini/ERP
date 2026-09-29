@@ -59,7 +59,7 @@ export class OpportunityController {
     update = async (req: Request, res: Response) => {
         try {
             const id = req.params.id as string;
-            const result = await this.opportunityService.update(id, req.body);
+            const result = await this.opportunityService.update(id, req.body, (req as AuthRequest).user);
             res.status(200).json(result);
         } catch (error: any) {
             res.status(400).json({ message: error.message });
@@ -100,10 +100,38 @@ export class OpportunityController {
     reject = async (req: Request, res: Response) => {
         try {
             const id = req.params.id as string;
-            const result = await this.opportunityService.reject(id, req.body.reason);
+            const result = await this.opportunityService.reject(id, req.body.reason, (req as AuthRequest).user);
             res.status(200).json(result);
         } catch (error: any) {
             res.status(400).json({ message: error.message });
+        }
+    }
+
+    saveDraft = async (req: Request, res: Response) => {
+        try {
+            const id = req.params.id as string;
+            const result = await this.opportunityService.saveDraft(id, req.body, (req as AuthRequest).user);
+            res.status(200).json(result);
+        } catch (error: any) {
+            if (error.message === "FORBIDDEN_ACCESS") {
+                res.status(403).json({ message: "Bạn không có quyền chỉnh sửa cơ hội này" });
+            } else {
+                res.status(400).json({ message: error.message });
+            }
+        }
+    }
+
+    resubmit = async (req: Request, res: Response) => {
+        try {
+            const id = req.params.id as string;
+            const result = await this.opportunityService.resubmit(id, (req as AuthRequest).user);
+            res.status(200).json(result);
+        } catch (error: any) {
+            if (error.message === "FORBIDDEN_ACCESS") {
+                res.status(403).json({ message: "Bạn không có quyền gửi lại cơ hội này" });
+            } else {
+                res.status(400).json({ message: error.message });
+            }
         }
     }
 }
