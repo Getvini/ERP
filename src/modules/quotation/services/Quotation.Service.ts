@@ -45,7 +45,7 @@ export class QuotationService {
         }
     }
 
-    private async notifyManagement(data: { title: string, content: string, quotationId: string, link?: string, relatedEntityId?: string, relatedEntityType?: string }) {
+    private async notifyManagement(data: { title: string, content: string, recipient?: string, quotationId: string, link?: string, relatedEntityId?: string, relatedEntityType?: string }) {
         await this.notifyRoles([UserRole.BOD, UserRole.ADMIN], data);
     }
 
@@ -231,7 +231,7 @@ export class QuotationService {
             await this.opportunityRepository.save(opportunity);
             opportunityEmitter.emit(OPPORTUNITY_EVENTS.UPDATED, opportunity);
         }
-        
+
         const saved = await this.quotationRepository.save(savedQuotation);
 
         // Notify BOD when a new quotation is created.
@@ -507,6 +507,7 @@ export class QuotationService {
             title: "Báo giá đã duyệt",
             content: `Báo giá lần ${quotation.version} cho cơ hội ${opportunity.opportunityCode}-${opportunity.name} đã được duyệt và tạo hợp đồng.`,
             quotationId: quotation.id,
+            recipient: `${opportunity?.createdBy}`,
             link: `/opportunities/${opportunity.id}`,
             relatedEntityId: opportunity.id,
             relatedEntityType: "Opportunities"
