@@ -27,6 +27,13 @@ import {
     assertParentDeadlineNotBeforeSubtasks
 } from "../helpers/SubtaskDeadline.helper";
 
+const STATUSES_RESET_ON_PERFORMER_CHANGE = [
+    TaskStatus.DOING,
+    TaskStatus.REWORKING,
+    TaskStatus.OVERDUE,
+    TaskStatus.REJECTED
+];
+
 const getVietnamCalendarDateKey = (date: Date) => {
     const parts = new Intl.DateTimeFormat("en-US", {
         timeZone: "Asia/Ho_Chi_Minh",
@@ -477,6 +484,11 @@ export class TaskAssignmentService extends TaskBaseService {
                         task.supportRequestType = null;
                     }
 
+                    if (STATUSES_RESET_ON_PERFORMER_CHANGE.includes(task.status)) {
+                        task.status = TaskStatus.NOT_STARTED;
+                        task.actualStartDate = null as any;
+                    }
+
                     // Lead giao lần đầu (hoặc nhận task cũ chưa có chủ sở hữu)
                     // trở thành chủ của quyền phân công. ADMIN ghi đè task đã có
                     // chủ nhưng không chiếm quyền của Lead ban đầu.
@@ -787,6 +799,10 @@ export class TaskAssignmentService extends TaskBaseService {
             } else {
                 const actorUserId = await this.assertCanManageTaskAssignment(task, currentUser, manager);
 
+                if (STATUSES_RESET_ON_PERFORMER_CHANGE.includes(task.status)) {
+                    task.status = TaskStatus.NOT_STARTED;
+                    task.actualStartDate = null as any;
+                }
                 if (task.status === TaskStatus.AWAITING_SUPPORT) task.status = TaskStatus.DOING;
                 task.isSupportRequested = false;
                 task.isSupportAccepted = false;
