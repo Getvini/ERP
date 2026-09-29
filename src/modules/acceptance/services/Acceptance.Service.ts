@@ -392,7 +392,7 @@ export class AcceptanceService {
           recipient: request.requester,
           relatedEntityId: request.id,
           relatedEntityType: "AcceptanceRequest",
-          link: `/acceptance/${request.id}`,
+          link: `/acceptance`,
         },
         manager,
       );
