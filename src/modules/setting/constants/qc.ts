@@ -15,10 +15,11 @@ export const QC_MODEL_OPTIONS: Record<string, QcOption[]> = {
         { value: "openai/gpt-oss-20b", label: "GPT-OSS 20B (nhanh, rẻ)" },
     ],
     openai: [
+        { value: "gpt-5.6-terra", label: "GPT-5.6 Terra (cân bằng, khuyên dùng)" },
+        { value: "gpt-5.6-luna", label: "GPT-5.6 Luna (rẻ, nhanh)" },
+        { value: "gpt-5.6-sol", label: "GPT-5.6 Sol (mạnh nhất, đắt)" },
+        { value: "gpt-4.1-mini", label: "GPT-4.1 mini (không suy luận, rẻ)" },
         { value: "gpt-4o-mini", label: "GPT-4o mini" },
-        { value: "luna", label: "Luna" },
-        { value: "terra", label: "Terra" },
-        { value: "sol", label: "Sol" },
     ],
     openrouter: [
         { value: "openai/gpt-4o-mini", label: "OpenAI GPT-4o mini (qua OpenRouter)" },
@@ -28,21 +29,29 @@ export const QC_MODEL_OPTIONS: Record<string, QcOption[]> = {
     ],
 };
 
+export const QC_REASONING_OPTIONS: QcOption[] = [
+    { value: "low", label: "Thấp (nhanh, dễ bỏ sót lỗi)" },
+    { value: "medium", label: "Vừa (khuyên dùng)" },
+    { value: "high", label: "Cao (kỹ nhất, tốn token hơn)" },
+];
+
 export const QC_MAX_BATCH_MIN = 1;
 export const QC_MAX_BATCH_MAX = 50;
 export const QC_MAX_CONTEXT_MIN = 1000;
 export const QC_MAX_CONTEXT_MAX = 200000;
 
 export const QC_DEFAULT_CONFIG = {
-    provider: QC_PROVIDER_OPTIONS[0].value,
-    verifyModel: QC_MODEL_OPTIONS[QC_PROVIDER_OPTIONS[0].value][0].value,
-    maxBatch: 4,
-    maxContext: 8000,
+    provider: "openai",
+    verifyModel: QC_MODEL_OPTIONS.openai[0].value,
+    reasoningEffort: "medium",
+    maxBatch: 3,
+    maxContext: 16000,
 };
 
 export type QcConfig = {
     provider: string;
     verifyModel: string;
+    reasoningEffort: string;
     maxBatch: number;
     maxContext: number;
 };
@@ -50,6 +59,9 @@ export type QcConfig = {
 export const isValidQcConfig = (config: Partial<QcConfig> | null | undefined): config is QcConfig => {
     if (!config?.provider || !config?.verifyModel) return false;
     if (!(QC_MODEL_OPTIONS[config.provider] || []).some((model) => model.value === config.verifyModel)) return false;
+
+    // Cấu hình cũ đã lưu chưa có reasoningEffort -> coi như hợp lệ (dùng mặc định)
+    if (config.reasoningEffort !== undefined && !QC_REASONING_OPTIONS.some((o) => o.value === config.reasoningEffort)) return false;
 
     const maxBatch = config.maxBatch;
     const maxContext = config.maxContext;

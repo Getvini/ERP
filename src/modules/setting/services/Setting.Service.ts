@@ -4,6 +4,7 @@ import {
     QC_DEFAULT_CONFIG,
     QC_MODEL_OPTIONS,
     QC_PROVIDER_OPTIONS,
+    QC_REASONING_OPTIONS,
     QC_SETTING_KEY,
     QcConfig,
     isValidQcConfig,
@@ -27,6 +28,7 @@ export class SettingService {
         return {
             providers: QC_PROVIDER_OPTIONS,
             models: QC_MODEL_OPTIONS,
+            reasoningEfforts: QC_REASONING_OPTIONS,
             defaults: QC_DEFAULT_CONFIG,
         };
     }
@@ -39,6 +41,7 @@ export class SettingService {
             return {
                 provider: stored.provider,
                 verifyModel: stored.verifyModel,
+                reasoningEffort: stored.reasoningEffort || QC_DEFAULT_CONFIG.reasoningEffort,
                 maxBatch: stored.maxBatch,
                 maxContext: stored.maxContext,
                 isCustomized: true,
@@ -57,6 +60,7 @@ export class SettingService {
         const normalized: Partial<QcConfig> = {
             provider: input.provider,
             verifyModel: input.verifyModel,
+            reasoningEffort: input.reasoningEffort || QC_DEFAULT_CONFIG.reasoningEffort,
             maxBatch: Number(input.maxBatch),
             maxContext: Number(input.maxContext),
         };

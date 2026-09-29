@@ -2,6 +2,7 @@ import axios from "axios";
 import { ProjectProductDescriptionService } from "../../project/services/ProjectProductDescription.Service";
 import { ProjectProductDescriptionStatus } from "../../project/entities/ProjectProductDescriptionSubmission.entity";
 import { SettingService } from "../../setting/services/Setting.Service";
+import type { ScanRegion } from "../../task/helpers/ScanScope.helper";
 import {
     assertAiServiceUrl,
     AI_SERVICE_MAX_FETCH_BYTES as MAX_FETCH_BYTES,
@@ -89,6 +90,7 @@ export class QcService {
         sheetNames: string[];
         projectId: string;
         scenarioIds?: string[];
+        regions?: ScanRegion[];
         actor?: Actor;
     }) {
         const productInfo = await this.getApprovedProductInfo(params.projectId, params.actor);
@@ -108,7 +110,8 @@ export class QcService {
             const sheetScenarioIds = params.scenarioIds
                 ? params.scenarioIds.filter((sid) => sid.startsWith(`${sheetName}::`))
                 : null;
-            if (params.scenarioIds && sheetScenarioIds!.length === 0) {
+            const sheetRegions = (params.regions || []).filter((region) => region.sheet === sheetName && region.qc !== false);
+            if (params.scenarioIds && sheetScenarioIds!.length === 0 && sheetRegions.length === 0) {
                 return { sheetName, data: { content_blocks: [], mismatch_report: { mismatches: [] }, models: null } };
             }
 
@@ -120,9 +123,14 @@ export class QcService {
                 formData.append("provider", qcConfig.provider);
                 formData.append("verify_model", qcConfig.verifyModel);
             }
+            formData.append("reasoning_effort", qcConfig.reasoningEffort);
             formData.append("max_scenarios_per_batch", String(qcConfig.maxBatch));
             formData.append("context_window", String(qcConfig.maxContext));
-            if (sheetScenarioIds) formData.append("scenario_ids", sheetScenarioIds.join(","));
+            if (sheetScenarioIds) {
+                formData.append("scenario_scope", "explicit");
+                if (sheetScenarioIds.length > 0) formData.append("scenario_ids", sheetScenarioIds.join(","));
+            }
+            if (sheetRegions.length > 0) formData.append("regions", JSON.stringify(sheetRegions));
 
             const data = await submitAndPollQcJob(formData);
             return { sheetName, data };

@@ -31,6 +31,7 @@ import {
 } from "../helpers/TaskOutcomeAuthorization.helper";
 
 import { TaskBaseService } from "./Task.BaseService";
+import { ScanRegion, ScanScopeError, normalizeRegions, normalizeScenarioIds } from "../helpers/ScanScope.helper";
 
 type SubmitResultData = {
     result: any;
@@ -38,6 +39,7 @@ type SubmitResultData = {
     whitelist?: string[];
     scenarioIds?: string[];
     scenarioLabels?: string[];
+    regions?: ScanRegion[];
     fileBuffer?: Buffer;
     checkFileUrl?: string;
     checkFileName?: string;
@@ -76,10 +78,26 @@ export class TaskResultService extends TaskBaseService {
             throw this.httpError("Kết quả công việc không hợp lệ", 400);
         }
 
+        const sheetNames = data.sheetNames && data.sheetNames.length > 0 ? data.sheetNames : undefined;
+        let scanScope: { scenarioIds?: string[]; regions: ScanRegion[] } | undefined;
+        if (sheetNames) {
+            try {
+                scanScope = {
+                    scenarioIds: normalizeScenarioIds(data.scenarioIds, sheetNames),
+                    regions: normalizeRegions(data.regions, sheetNames)
+                };
+            } catch (err) {
+                if (err instanceof ScanScopeError) throw this.httpError(err.message, 400);
+                throw err;
+            }
+        }
+
         task.result = {
             ...data.result,
-            sheetNames: data.sheetNames && data.sheetNames.length > 0 ? data.sheetNames : undefined,
+            sheetNames,
             scenarioLabels: data.scenarioLabels && data.scenarioLabels.length > 0 ? data.scenarioLabels : undefined,
+            scanScope,
+            whitelist: data.whitelist && data.whitelist.length > 0 ? data.whitelist : undefined,
             checkFileUrl: data.checkFileUrl,
             checkFileName: data.checkFileName
         };
@@ -98,6 +116,7 @@ export class TaskResultService extends TaskBaseService {
             whitelist: data.whitelist,
             scenarioIds: data.scenarioIds,
             scenarioLabels: data.scenarioLabels,
+            regions: data.regions,
             checkFileUrl: data.checkFileUrl,
             checkFileName: data.checkFileName
         });
@@ -194,15 +213,33 @@ export class TaskResultService extends TaskBaseService {
             const resultMeta = task.result as any;
             const checkFileUrl = checkOptions.checkFileUrl || resultMeta.checkFileUrl || task.result?.url;
             const checkFileName = checkOptions.checkFileName || resultMeta.checkFileName || task.result?.name;
+            const storedScope = resultMeta.scanScope as { scenarioIds?: string[]; regions?: ScanRegion[] } | undefined;
+            const scanSheetNames = sheetNames || [];
+            let regions: ScanRegion[] = [];
+            let scenarioIds: string[] | undefined;
+            try {
+                regions = normalizeRegions(checkOptions.regions ?? storedScope?.regions, scanSheetNames);
+                scenarioIds = normalizeScenarioIds(checkOptions.scenarioIds ?? storedScope?.scenarioIds, scanSheetNames);
+            } catch (err) {
+                if (err instanceof ScanScopeError) {
+                    console.log(`[RESULT_CHECK_DEBUG] phạm vi quét đã lưu không hợp lệ, bỏ qua vùng tự chọn taskId=${task.id} message=${err.message}`);
+                } else {
+                    throw err;
+                }
+            }
+            const whitelist = checkOptions.whitelist && checkOptions.whitelist.length > 0
+                ? checkOptions.whitelist
+                : (resultMeta.whitelist as string[] | undefined) || [];
             void this.resultCheckService.startForSubmission({
                 taskId: task.id,
                 projectId: task.project?.id,
                 fileBuffer: checkOptions.fileBuffer,
                 fileUrl: checkOptions.fileBuffer ? undefined : checkFileUrl,
                 fileName: checkFileName,
-                sheetNames: sheetNames || [],
-                whitelist: checkOptions.whitelist || [],
-                scenarioIds: checkOptions.scenarioIds || [],
+                sheetNames: scanSheetNames,
+                whitelist,
+                scenarioIds,
+                regions,
                 actor: currentUser
             });
         }

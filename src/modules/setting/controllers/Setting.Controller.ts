@@ -16,8 +16,8 @@ export class SettingController {
 
     updateQc = async (req: AuthRequest, res: Response) => {
         try {
-            const { provider, verifyModel, maxBatch, maxContext } = req.body || {};
-            const config = await this.service.updateQcConfig({ provider, verifyModel, maxBatch, maxContext }, req.user);
+            const { provider, verifyModel, reasoningEffort, maxBatch, maxContext } = req.body || {};
+            const config = await this.service.updateQcConfig({ provider, verifyModel, reasoningEffort, maxBatch, maxContext }, req.user);
             res.status(200).json({ config, options: this.service.getQcOptions() });
         } catch (error: any) {
             res.status(error.statusCode || 500).json({ message: error.message });

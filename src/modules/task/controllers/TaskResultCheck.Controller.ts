@@ -40,9 +40,27 @@ export class TaskResultCheckController {
     rerun = async (req: Request, res: Response) => {
         try {
             const user = (req as any).user;
-            const kind = req.body.kind === "QC" ? "QC" : "SPELL";
+            const kind = ["QC", "BOTH"].includes(req.body.kind) ? req.body.kind : "SPELL";
             const whitelist = Array.isArray(req.body.whitelist) ? req.body.whitelist : [];
-            const result = await this.service.rerunCheck(req.params.taskId as string, kind, whitelist, user);
+            const scope = req.body.scope && typeof req.body.scope === "object" ? req.body.scope : null;
+            const result = await this.service.rerunCheck(req.params.taskId as string, kind, whitelist, user, scope);
+            res.status(200).json(result);
+        } catch (error: any) {
+            res.status(error.statusCode || 500).json({ message: error.message });
+        }
+    };
+
+    preview = async (req: Request, res: Response) => {
+        try {
+            const user = (req as any).user;
+            const { sheet, rowStart, rowCount, colStart, colCount } = req.query;
+            const result = await this.service.getPreview(req.params.taskId as string, {
+                sheet: typeof sheet === "string" ? sheet : undefined,
+                rowStart: rowStart as string | undefined,
+                rowCount: rowCount as string | undefined,
+                colStart: colStart as string | undefined,
+                colCount: colCount as string | undefined
+            }, user);
             res.status(200).json(result);
         } catch (error: any) {
             res.status(error.statusCode || 500).json({ message: error.message });

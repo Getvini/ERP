@@ -19,6 +19,18 @@ import { TaskBaseService } from "./Task.BaseService";
 import { Tasks } from "../entities/Task.entity";
 import { Users } from "../../user/entities/User.entity";
 import { MemberRole, memberHasRole } from "../../project/entities/TeamMember.entity";
+import { SheetPreviewService, PreviewWindowRequest } from "../../../shared/services/SheetPreview.Service";
+import {
+    ScanRegion,
+    ScanScope,
+    normalizeRegions,
+    normalizeScenarioIds,
+    qcItemInScope,
+    sheetsOfScope,
+    spellItemInScope,
+    stableItemId,
+    upsertRegions
+} from "../helpers/ScanScope.helper";
 
 const MAX_FETCH_BYTES = 500 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
@@ -27,6 +39,36 @@ const FONT_REGULAR = path.join(__dirname, "../../../../assets/fonts/DejaVuSans.t
 const FONT_BOLD = path.join(__dirname, "../../../../assets/fonts/DejaVuSans-Bold.ttf");
 
 type Actor = { id?: string; userId?: string; role?: string };
+
+type CheckParams = {
+    taskId: string;
+    projectId?: string;
+    fileBuffer?: Buffer;
+    fileUrl?: string;
+    fileName: string;
+    sheetNames: string[];
+    whitelist: string[];
+    scenarioIds?: string[];
+    regions?: ScanRegion[];
+    actor?: Actor;
+};
+
+type RerunKind = "SPELL" | "QC" | "BOTH";
+
+type ScannedScenario = NonNullable<TaskResultChecks["scannedScenarios"]>[number];
+
+function mergeScannedScenarios(current: ScannedScenario[] | null | undefined, incoming: ScannedScenario[], partial: boolean) {
+    if (!partial) return incoming;
+    const map = new Map<string, ScannedScenario>();
+    for (const item of current || []) map.set(item.id, item);
+    for (const item of incoming || []) map.set(item.id, item);
+    return Array.from(map.values());
+}
+
+function bareCellRef(ref: string) {
+    const idx = ref.lastIndexOf("!");
+    return idx >= 0 ? ref.slice(idx + 1) : ref;
+}
 
 function getExt(name: string) {
     return (name.split(".").pop() || "").toLowerCase();
@@ -91,21 +133,11 @@ export class TaskResultCheckService extends TaskBaseService {
         return Array.from(map.values());
     }
 
-    async startForSubmission(params: {
-        taskId: string;
-        projectId?: string;
-        fileBuffer?: Buffer;
-        fileUrl?: string;
-        fileName: string;
-        sheetNames: string[];
-        whitelist: string[];
-        scenarioIds?: string[];
-        actor?: Actor;
-    }) {
+    async startForSubmission(params: CheckParams) {
         const ext = getExt(params.fileName || "");
-        if (params.sheetNames.length === 0 && params.scenarioIds && params.scenarioIds.length > 0) {
-            const derived = Array.from(new Set(params.scenarioIds.map(id => id.split("::")[0]).filter(Boolean)));
-            params.sheetNames = derived;
+        const regions = params.regions || [];
+        if (params.sheetNames.length === 0) {
+            params.sheetNames = sheetsOfScope({ scenarioIds: params.scenarioIds, regions });
         }
         if (!SHEET_EXTENSIONS.includes(ext) || params.sheetNames.length === 0) {
             console.log(`[RESULT_CHECK_DEBUG] startForSubmission BO QUA quet (khong tao record) taskId=${params.taskId} fileName=${params.fileName} ext=${ext} sheetNames=${JSON.stringify(params.sheetNames)} scenarioIds=${JSON.stringify(params.scenarioIds)}`);
@@ -122,7 +154,9 @@ export class TaskResultCheckService extends TaskBaseService {
             spellStatus: TaskResultCheckStatus.RUNNING,
             qcStatus: TaskResultCheckStatus.RUNNING,
             sheetNames: params.sheetNames,
-            scenarioIds: params.scenarioIds && params.scenarioIds.length > 0 ? params.scenarioIds : null
+            scenarioIds: params.scenarioIds ?? null,
+            scanRegions: regions.length > 0 ? regions : null,
+            qcSkippedReason: null
         });
         record = await this.repository.save(record);
         taskResultCheckEmitter.emit(TASK_RESULT_CHECK_EVENTS.UPDATED, { taskId: params.taskId });
@@ -141,17 +175,7 @@ export class TaskResultCheckService extends TaskBaseService {
         });
     }
 
-    private async run(recordId: string, params: {
-        taskId: string;
-        projectId?: string;
-        fileBuffer?: Buffer;
-        fileUrl?: string;
-        fileName: string;
-        sheetNames: string[];
-        whitelist: string[];
-        scenarioIds?: string[];
-        actor?: Actor;
-    }) {
+    private async run(recordId: string, params: CheckParams) {
         let buffer = params.fileBuffer;
         if (!buffer && params.fileUrl) buffer = await fetchRemoteFile(params.fileUrl);
         if (!buffer) throw new Error("Không có dữ liệu file để kiểm tra");
@@ -168,9 +192,12 @@ export class TaskResultCheckService extends TaskBaseService {
 
         const mergedWhitelist = await this.mergeProjectWhitelist(params.projectId, params.whitelist, params.actor);
 
+        const scope: ScanScope = { scenarioIds: params.scenarioIds, regions: params.regions || [] };
+        const displayMultiSheet = params.sheetNames.length > 1;
+
         await Promise.all([
-            this.runSpellCheck(recordId, params.taskId, filteredBuffer, params.fileName, params.sheetNames, mergedWhitelist, params.scenarioIds),
-            this.runQcCheck(recordId, params.taskId, filteredBuffer, params.fileName, params.sheetNames, params.scenarioIds, params.projectId, params.actor)
+            this.runSpellCheck(recordId, params.taskId, filteredBuffer, params.fileName, params.sheetNames, mergedWhitelist, scope, displayMultiSheet, false),
+            this.runQcCheck(recordId, params.taskId, filteredBuffer, params.fileName, params.sheetNames, scope, params.projectId, params.actor, false)
         ]);
 
         const finalRecord = await this.repository.findOne({ where: { id: recordId } });
@@ -190,12 +217,14 @@ export class TaskResultCheckService extends TaskBaseService {
         fileName: string,
         sheetNames: string[],
         whitelist: string[],
-        scenarioIds?: string[]
+        scope: ScanScope,
+        displayMultiSheet: boolean,
+        partial: boolean
     ) {
         try {
-            const spell = await this.executeSpellCheck(buffer, fileName, sheetNames, whitelist, scenarioIds);
-            console.log(`[RESULT_CHECK_DEBUG] executeSpellCheck OK recordId=${recordId} requested_scenarioIds=${JSON.stringify(scenarioIds)} spellErrors=${spell.spellErrors?.length ?? 0} scannedScenarios=${spell.scannedScenarios?.length ?? 0}`);
-            await this.repository.update(recordId, { ...spell, spellStatus: TaskResultCheckStatus.DONE, spellErrorMessage: null });
+            const spell = await this.executeSpellCheck(buffer, fileName, sheetNames, whitelist, scope, displayMultiSheet);
+            console.log(`[RESULT_CHECK_DEBUG] executeSpellCheck OK recordId=${recordId} requested_scenarioIds=${JSON.stringify(scope.scenarioIds)} regions=${scope.regions.length} spellErrors=${spell.spellErrors?.length ?? 0} scannedScenarios=${spell.scannedScenarios?.length ?? 0}`);
+            await this.applySpellResult(recordId, spell, partial ? scope : null);
         } catch (err: any) {
             console.log(`[RESULT_CHECK_DEBUG] executeSpellCheck LOI recordId=${recordId} status=${err?.response?.status} detail=${JSON.stringify(err?.response?.data)} message=${err?.message}`);
             await this.repository.update(recordId, {
@@ -212,14 +241,15 @@ export class TaskResultCheckService extends TaskBaseService {
         buffer: Buffer,
         fileName: string,
         sheetNames: string[],
-        scenarioIds: string[] | undefined,
+        scope: ScanScope,
         projectId: string | undefined,
-        actor?: Actor
+        actor: Actor | undefined,
+        partial: boolean
     ) {
         try {
-            const qc = await this.executeQcCheck(buffer, fileName, sheetNames, scenarioIds, projectId, actor);
-            console.log(`[RESULT_CHECK_DEBUG] executeQcCheck OK recordId=${recordId} projectId=${projectId} requested_scenarioIds=${JSON.stringify(scenarioIds)} qcMismatches=${qc.qcMismatches?.length ?? 0}`);
-            await this.repository.update(recordId, { ...qc, qcStatus: TaskResultCheckStatus.DONE, qcErrorMessage: null });
+            const qc = await this.executeQcCheck(buffer, fileName, sheetNames, scope, projectId, actor);
+            console.log(`[RESULT_CHECK_DEBUG] executeQcCheck OK recordId=${recordId} projectId=${projectId} requested_scenarioIds=${JSON.stringify(scope.scenarioIds)} regions=${scope.regions.length} qcMismatches=${qc.qcMismatches?.length ?? 0} skipped=${qc.qcSkippedReason ?? "no"}`);
+            await this.applyQcResult(recordId, qc, partial ? scope : null);
         } catch (err: any) {
             console.log(`[RESULT_CHECK_DEBUG] executeQcCheck LOI recordId=${recordId} status=${err?.response?.status} detail=${JSON.stringify(err?.response?.data)} message=${err?.message}`);
             await this.repository.update(recordId, {
@@ -273,7 +303,8 @@ export class TaskResultCheckService extends TaskBaseService {
         fileName: string,
         sheetNames: string[],
         whitelist: string[],
-        scenarioIds?: string[]
+        scope: ScanScope,
+        displayMultiSheet: boolean
     ) {
         const spellJob = await this.spellingCheckService.start(
             buffer,
@@ -281,62 +312,127 @@ export class TaskResultCheckService extends TaskBaseService {
             "both",
             sheetNames.join(","),
             whitelist.join(","),
-            scenarioIds && scenarioIds.length > 0 ? scenarioIds.join(",") : undefined
+            scope.scenarioIds ? scope.scenarioIds.join(",") : undefined,
+            scope.regions.length > 0 ? JSON.stringify(scope.regions) : undefined
         );
         const { errors: spellErrors, scannedScenarios } = await this.pollSpellJob(spellJob.job_id);
 
-        const spellErrorsWithId = spellErrors.map((e: any, idx: number) => ({
-            id: `spell-${idx}`,
-            location: rawLocationToExcelRef(e.location),
-            token: e.token,
-            sheetName: e.sheet || null,
-            scenarioLabel: e.scenario || null,
-            scenarioId: e.scenarioId || null
-        }));
+        const seen = new Map<string, number>();
+        const spellErrorsWithId = spellErrors.map((e: any) => {
+            const cell = bareCellRef(rawLocationToExcelRef(e.location));
+            return {
+                id: stableItemId("spell", [e.sheet, cell, e.token], seen),
+                location: displayMultiSheet && e.sheet ? `${e.sheet}!${cell}` : cell,
+                token: e.token,
+                sheetName: e.sheet || null,
+                scenarioLabel: e.scenario || null,
+                scenarioId: e.scenarioId || null
+            };
+        });
         const reviewedSpellErrors = spellErrorsWithId.map(e => ({ ...e, confirmed: true }));
 
-        return { spellErrors: spellErrorsWithId, reviewedSpellErrors, scannedScenarios };
+        return { spellErrors: spellErrorsWithId, reviewedSpellErrors, scannedScenarios: scannedScenarios as ScannedScenario[] };
+    }
+
+    private async applySpellResult(
+        recordId: string,
+        spell: Awaited<ReturnType<TaskResultCheckService["executeSpellCheck"]>>,
+        partialScope: ScanScope | null
+    ) {
+        await AppDataSource.transaction(async (manager) => {
+            const repo = manager.getRepository(TaskResultChecks);
+            const record = await repo.findOne({ where: { id: recordId }, lock: { mode: "pessimistic_write" } });
+            if (!record) return;
+
+            const fallbackSheet = record.sheetNames?.length === 1 ? record.sheetNames[0] : null;
+            const previous = record.reviewedSpellErrors || [];
+            const previousById = new Map(previous.map(item => [item.id, item]));
+            const outOfScope = <T extends { location: string; sheetName?: string | null; scenarioId?: string | null }>(items: T[]) =>
+                partialScope ? items.filter(item => !spellItemInScope(item, partialScope, fallbackSheet)) : [];
+
+            record.spellErrors = [...outOfScope(record.spellErrors || []), ...spell.spellErrors];
+            record.reviewedSpellErrors = [
+                ...outOfScope(previous),
+                ...spell.reviewedSpellErrors.map(item => ({ ...item, confirmed: previousById.get(item.id)?.confirmed ?? item.confirmed }))
+            ];
+            record.scannedScenarios = mergeScannedScenarios(record.scannedScenarios, spell.scannedScenarios, Boolean(partialScope));
+            record.spellStatus = TaskResultCheckStatus.DONE;
+            record.spellErrorMessage = null;
+            await repo.save(record);
+        });
     }
 
     private async executeQcCheck(
         buffer: Buffer,
         fileName: string,
         sheetNames: string[],
-        scenarioIds?: string[],
+        scope: ScanScope,
         projectId?: string,
         actor?: Actor
     ) {
         let qcMismatches: Record<string, any>[] = [];
-        let qcModels: { extract: string; verify: string } | null = null;
-        if (projectId) {
+        let qcModels: { verify: string } | null = null;
+        let qcSkippedReason: string | null = null;
+        if (!projectId) {
+            qcSkippedReason = "Công việc chưa thuộc dự án nào nên không có thông tin chuẩn để đối chiếu QC";
+        } else {
             try {
                 const qcResult = await this.qcService.run({
                     fileBuffer: buffer,
                     fileName,
                     sheetNames,
                     projectId,
-                    scenarioIds: scenarioIds && scenarioIds.length > 0 ? scenarioIds : undefined,
+                    scenarioIds: scope.scenarioIds,
+                    regions: scope.regions,
                     actor: actor as any
                 });
                 qcMismatches = qcResult?.mismatch_report?.mismatches || [];
                 qcModels = qcResult?.models || null;
             } catch (err: any) {
                 if (err?.statusCode === 400) {
-                    console.log(`[RESULT_CHECK_DEBUG] executeQcCheck: AI service tra ve 400, QC bi coi la 0 mismatch (AN LOI THUC SU) message=${err?.message}`);
-                    qcMismatches = [];
+                    qcSkippedReason = err?.message || "Không thể chạy QC với dữ liệu hiện tại";
                 } else {
                     throw new Error(err?.response?.data?.detail || err?.message || "Không thể chạy QC do lỗi máy chủ AI service");
                 }
             }
         }
 
-        const reviewedQcMismatches = qcMismatches.map((m: any, idx: number) => ({
+        const seen = new Map<string, number>();
+        const reviewedQcMismatches = qcMismatches.map((m: any) => ({
             ...m,
-            id: `qc-${idx}`,
+            id: stableItemId("qc", [m.sheet_name, m.id, m.product_ref, m.attribute, m.claimed_value], seen),
             confirmed: m.status !== "unresolved"
         }));
 
-        return { qcMismatches, reviewedQcMismatches, qcModels };
+        return { qcMismatches, reviewedQcMismatches, qcModels, qcSkippedReason };
+    }
+
+    private async applyQcResult(
+        recordId: string,
+        qc: Awaited<ReturnType<TaskResultCheckService["executeQcCheck"]>>,
+        partialScope: ScanScope | null
+    ) {
+        await AppDataSource.transaction(async (manager) => {
+            const repo = manager.getRepository(TaskResultChecks);
+            const record = await repo.findOne({ where: { id: recordId }, lock: { mode: "pessimistic_write" } });
+            if (!record) return;
+
+            const previous = record.reviewedQcMismatches || [];
+            const previousById = new Map(previous.map(item => [item.id, item]));
+            const outOfScope = <T extends Record<string, any>>(items: T[]) =>
+                partialScope ? items.filter(item => !qcItemInScope(item, partialScope)) : [];
+
+            record.qcMismatches = [...outOfScope(record.qcMismatches || []), ...qc.qcMismatches];
+            record.reviewedQcMismatches = [
+                ...outOfScope(previous),
+                ...qc.reviewedQcMismatches.map(item => ({ ...item, confirmed: previousById.get(item.id)?.confirmed ?? item.confirmed }))
+            ];
+            record.qcModels = qc.qcModels ?? record.qcModels;
+            record.qcSkippedReason = qc.qcSkippedReason;
+            record.qcStatus = TaskResultCheckStatus.DONE;
+            record.qcErrorMessage = null;
+            await repo.save(record);
+        });
     }
 
     private async pollSpellJob(jobId: string): Promise<{ errors: any[]; scannedScenarios: any[] }> {
@@ -383,6 +479,11 @@ export class TaskResultCheckService extends TaskBaseService {
         return {
             ...base,
             qcModels: record.qcModels,
+            qcSkippedReason: record.qcSkippedReason,
+            sheetNames: record.sheetNames,
+            scenarioIds: record.scenarioIds,
+            scanRegions: record.scanRegions,
+            scannedScenarios: record.scannedScenarios,
             reviewedSpellErrors: (record.reviewedSpellErrors || []).filter(i => i.confirmed),
             reviewedQcMismatches: (record.reviewedQcMismatches || []).filter(i => i.confirmed)
         };
@@ -396,6 +497,9 @@ export class TaskResultCheckService extends TaskBaseService {
         const task = await this.getOne(taskId);
         this.assertCanReview(task, actor);
 
+        // Các từ được tick lại và không còn mục nào cùng từ đó bị bỏ tick -> phải gỡ khỏi whitelist.
+        let restoredTokens: string[] = [];
+
         const saved = await AppDataSource.transaction(async (manager) => {
             const repo = manager.getRepository(TaskResultChecks);
             const record = await repo.findOne({ where: { taskId }, lock: { mode: "pessimistic_write" } });
@@ -407,6 +511,28 @@ export class TaskResultCheckService extends TaskBaseService {
                 record.reviewedSpellErrors = (record.reviewedSpellErrors || []).map(item =>
                     idSet.has(item.id) ? { ...item, confirmed } : item
                 );
+
+                if (confirmed) {
+                    const touchedTokens = new Set(
+                        record.reviewedSpellErrors
+                            .filter(item => idSet.has(item.id))
+                            .map(item => item.token)
+                            .filter(Boolean)
+                    );
+                    const stillDismissed = new Set(
+                        record.reviewedSpellErrors
+                            .filter(item => !item.confirmed && touchedTokens.has(item.token))
+                            .map(item => item.token)
+                    );
+                    restoredTokens = Array.from(touchedTokens).filter(token => !stillDismissed.has(token));
+
+                    // reviewerWhitelist được lưu lại mỗi lần "Kiểm tra lại" nên cũng phải gỡ ở đây,
+                    // nếu không từ đó sẽ tự quay lại whitelist khi getForTask gộp danh sách.
+                    if (restoredTokens.length > 0 && record.reviewerWhitelist?.length) {
+                        const restoredSet = new Set(restoredTokens);
+                        record.reviewerWhitelist = record.reviewerWhitelist.filter(word => !restoredSet.has(word));
+                    }
+                }
             } else {
                 record.reviewedQcMismatches = (record.reviewedQcMismatches || []).map(item =>
                     idSet.has(item.id) ? { ...item, confirmed } : item
@@ -426,58 +552,133 @@ export class TaskResultCheckService extends TaskBaseService {
             }
         }
 
+        if (kind === "SPELL" && confirmed && restoredTokens.length > 0 && task.project?.id) {
+            await this.whitelistService.removeWordsByText(task.project.id, restoredTokens, actor as any);
+        }
+
         taskResultCheckEmitter.emit(TASK_RESULT_CHECK_EVENTS.UPDATED, { taskId });
 
         return saved;
     }
 
-    async rerunCheck(taskId: string, kind: "SPELL" | "QC", whitelist: string[], actor?: Actor) {
+    async rerunCheck(
+        taskId: string,
+        kind: RerunKind,
+        whitelist: string[],
+        actor?: Actor,
+        rawScope?: { scenarioIds?: unknown; regions?: unknown } | null
+    ) {
         const task = await this.getOne(taskId);
         this.assertCanReview(task, actor);
 
         const record = await this.repository.findOne({ where: { taskId } });
         if (!record) throw this.httpError("Không tìm thấy kết quả kiểm tra", 404);
         if (record.finalizedAt) throw this.httpError("Đã chốt kiểm tra, không thể kiểm tra lại", 409);
-        const currentStatus = kind === "SPELL" ? record.spellStatus : record.qcStatus;
-        if (currentStatus === TaskResultCheckStatus.RUNNING) throw this.httpError("Đang kiểm tra, vui lòng chờ", 409);
+
+        const kinds: ("SPELL" | "QC")[] = kind === "BOTH" ? ["SPELL", "QC"] : [kind];
+        for (const k of kinds) {
+            const currentStatus = k === "SPELL" ? record.spellStatus : record.qcStatus;
+            if (currentStatus === TaskResultCheckStatus.RUNNING) throw this.httpError("Đang kiểm tra, vui lòng chờ", 409);
+        }
         if (!record.filteredFileUrl) throw this.httpError("Không có file để kiểm tra lại", 400);
 
-        const update: Record<string, any> = kind === "SPELL"
-            ? { spellStatus: TaskResultCheckStatus.RUNNING, spellErrorMessage: null, reviewerWhitelist: whitelist }
-            : { qcStatus: TaskResultCheckStatus.RUNNING, qcErrorMessage: null };
+        const recordSheets = record.sheetNames || [];
+        let partialScope: ScanScope | null = null;
+        if (rawScope) {
+            try {
+                const regions = normalizeRegions(rawScope.regions, recordSheets);
+                const scenarioIds = normalizeScenarioIds(rawScope.scenarioIds ?? [], recordSheets) || [];
+                if (regions.length === 0 && scenarioIds.length === 0) {
+                    throw this.httpError("Vui lòng chọn ít nhất một vùng hoặc kịch bản để quét lại", 400);
+                }
+                partialScope = { scenarioIds, regions };
+            } catch (err: any) {
+                throw this.httpError(err?.message || "Phạm vi quét lại không hợp lệ", err?.statusCode || 400);
+            }
+        }
+
+        const update: Record<string, any> = {};
+        if (kinds.includes("SPELL")) {
+            update.spellStatus = TaskResultCheckStatus.RUNNING;
+            update.spellErrorMessage = null;
+            update.reviewerWhitelist = whitelist;
+        }
+        if (kinds.includes("QC")) {
+            update.qcStatus = TaskResultCheckStatus.RUNNING;
+            update.qcErrorMessage = null;
+        }
+        if (partialScope) {
+            if (partialScope.regions.length > 0) update.scanRegions = upsertRegions(record.scanRegions, partialScope.regions);
+            if (record.scenarioIds && partialScope.scenarioIds && partialScope.scenarioIds.length > 0) {
+                update.scenarioIds = Array.from(new Set([...record.scenarioIds, ...partialScope.scenarioIds]));
+            }
+        }
         await this.repository.update(record.id, update);
         taskResultCheckEmitter.emit(TASK_RESULT_CHECK_EVENTS.UPDATED, { taskId });
 
-        this.runRerun(record.id, task, record, kind, whitelist, actor);
+        const refreshed = { ...record, ...update } as TaskResultChecks;
+        void this.runRerun(record.id, task, refreshed, kinds, whitelist, partialScope, actor);
 
         return { status: TaskResultCheckStatus.RUNNING };
     }
 
-    private async runRerun(recordId: string, task: Tasks, record: TaskResultChecks, kind: "SPELL" | "QC", whitelist: string[], actor?: Actor) {
+    private async runRerun(
+        recordId: string,
+        task: Tasks,
+        record: TaskResultChecks,
+        kinds: ("SPELL" | "QC")[],
+        whitelist: string[],
+        partialScope: ScanScope | null,
+        actor?: Actor
+    ) {
         let buffer: Buffer;
         try {
             buffer = await fetchRemoteFile(record.filteredFileUrl as string);
         } catch (err: any) {
-            const field = kind === "SPELL" ? "spellStatus" : "qcStatus";
-            const errField = kind === "SPELL" ? "spellErrorMessage" : "qcErrorMessage";
-            await this.repository.update(recordId, {
-                [field]: TaskResultCheckStatus.ERROR,
-                [errField]: err?.message || "Không tải được file để kiểm tra lại"
-            });
+            const failure: Record<string, any> = {};
+            const message = err?.message || "Không tải được file để kiểm tra lại";
+            if (kinds.includes("SPELL")) Object.assign(failure, { spellStatus: TaskResultCheckStatus.ERROR, spellErrorMessage: message });
+            if (kinds.includes("QC")) Object.assign(failure, { qcStatus: TaskResultCheckStatus.ERROR, qcErrorMessage: message });
+            await this.repository.update(recordId, failure);
             taskResultCheckEmitter.emit(TASK_RESULT_CHECK_EVENTS.UPDATED, { taskId: task.id });
             return;
         }
 
         const fileName = record.fileName || (task.result as any)?.name || `${task.id}.xlsx`;
-        const sheetNames = record.sheetNames || [];
-        const scenarioIds = record.scenarioIds || undefined;
+        const recordSheets = record.sheetNames || [];
+        const scope: ScanScope = partialScope || {
+            scenarioIds: record.scenarioIds ?? undefined,
+            regions: record.scanRegions || []
+        };
+        const sheetNames = partialScope
+            ? sheetsOfScope(partialScope).filter(sheet => recordSheets.includes(sheet))
+            : recordSheets;
+        const displayMultiSheet = recordSheets.length > 1;
 
-        if (kind === "SPELL") {
+        const jobs: Promise<void>[] = [];
+        if (kinds.includes("SPELL")) {
             const mergedWhitelist = await this.mergeProjectWhitelist(task.project?.id, whitelist, actor);
-            await this.runSpellCheck(recordId, task.id, buffer, fileName, sheetNames, mergedWhitelist, scenarioIds);
-        } else {
-            await this.runQcCheck(recordId, task.id, buffer, fileName, sheetNames, scenarioIds, task.project?.id, actor);
+            jobs.push(this.runSpellCheck(recordId, task.id, buffer, fileName, sheetNames, mergedWhitelist, scope, displayMultiSheet, Boolean(partialScope)));
         }
+        if (kinds.includes("QC")) {
+            jobs.push(this.runQcCheck(recordId, task.id, buffer, fileName, sheetNames, scope, task.project?.id, actor, Boolean(partialScope)));
+        }
+        await Promise.all(jobs);
+    }
+
+    async getPreview(taskId: string, request: PreviewWindowRequest, actor?: Actor) {
+        const task = await this.getOne(taskId);
+        this.assertCanAccess(task, actor);
+
+        const record = await this.repository.findOne({ where: { taskId } });
+        if (!record) throw this.httpError("Không tìm thấy kết quả kiểm tra", 404);
+        if (!this.canReviewChecks(task, actor) && !record.finalizedAt) {
+            throw this.httpError("Kết quả kiểm tra chưa được chốt nên chưa thể xem bảng", 403);
+        }
+        const fileUrl = record.filteredFileUrl;
+        if (!fileUrl) throw this.httpError("File kiểm tra chưa sẵn sàng để xem", 409);
+
+        return SheetPreviewService.fromCachedFile(`check:${fileUrl}`, () => fetchRemoteFile(fileUrl), request);
     }
 
     async finalize(taskId: string, actor?: Actor) {
@@ -586,6 +787,11 @@ export class TaskResultCheckService extends TaskBaseService {
             doc.rect(x, doc.y, 6, 16).fill("#ea580c");
             doc.font("Base-Bold").fontSize(13).fillColor("#1e293b").text(`  Điểm QC chưa khớp đã xác nhận (${qcItems.length} lỗi, ${qcGroups.length} thuộc tính)`, x + 10, doc.y - 14);
             doc.moveDown(0.8);
+
+            if (record.qcSkippedReason) {
+                doc.font("Base").fontSize(10).fillColor("#b45309").text(`QC chưa được quét: ${record.qcSkippedReason}`);
+                doc.moveDown(0.5);
+            }
 
             if (qcGroups.length === 0) {
                 doc.font("Base").fontSize(10).fillColor("#64748b").text("Không có điểm chưa khớp được xác nhận");

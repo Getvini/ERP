@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import fs from "fs";
 import { TaskService } from "../services/Task.Service";
 import { uploadToCloudinary, streamUploadToCloudinary } from "../../../shared/helpers/cloudinary.helper";
+import { parseIdList } from "../helpers/ScanScope.helper";
 
 export class TaskController {
     private taskService = new TaskService();
@@ -141,7 +142,7 @@ export class TaskController {
         try {
             const taskId = req.params.id as string;
             // result is now pre-uploaded and sent in body
-            const { result: bodyResult, link, sheetNames, whitelist, scenarioIds, scenarioLabels, checkFileUrl, checkFileName, draft } = req.body;
+            const { result: bodyResult, link, sheetNames, whitelist, scenarioIds, scenarioLabels, regions, checkFileUrl, checkFileName, draft } = req.body;
             let resultData: any = null;
 
             if (bodyResult && (bodyResult.type === "CHECKLIST" || bodyResult.type === "CONFIRMATION")) {
@@ -179,6 +180,7 @@ export class TaskController {
                 whitelist: Array.isArray(whitelist) ? whitelist : undefined,
                 scenarioIds: Array.isArray(scenarioIds) ? scenarioIds : undefined,
                 scenarioLabels: Array.isArray(scenarioLabels) ? scenarioLabels : undefined,
+                regions: Array.isArray(regions) ? regions : undefined,
                 checkFileUrl,
                 checkFileName,
                 draft: draft === true || draft === "true"
@@ -211,7 +213,15 @@ export class TaskController {
 
             const sheetNames = String(req.body.sheetNames || "").split(",").map((s: string) => s.trim()).filter(Boolean);
             const whitelist = String(req.body.whitelist || "").split(",").map((s: string) => s.trim()).filter(Boolean);
-            const scenarioIds = String(req.body.scenarioIds || "").split(",").map((s: string) => s.trim()).filter(Boolean);
+            const scenarioIds = req.body.scenarioIds === undefined ? undefined : parseIdList(req.body.scenarioIds);
+            let regions: unknown;
+            if (req.body.regions) {
+                try {
+                    regions = JSON.parse(req.body.regions);
+                } catch {
+                    return res.status(400).json({ message: "Danh sách vùng quét không hợp lệ" });
+                }
+            }
             let scenarioLabels: string[] = [];
             try {
                 const parsed = JSON.parse(req.body.scenarioLabels || "[]");
@@ -227,6 +237,7 @@ export class TaskController {
                 whitelist,
                 scenarioIds,
                 scenarioLabels,
+                regions: Array.isArray(regions) ? regions : undefined,
                 fileBuffer,
                 draft: req.body.draft === true || req.body.draft === "true"
             }, user);

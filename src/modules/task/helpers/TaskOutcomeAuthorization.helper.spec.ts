@@ -17,7 +17,7 @@ const baseTask = (overrides: Record<string, unknown> = {}) => ({
     helperId: null,
     project: {
         team: {
-            teamLead: { id: "account-a" },
+            teamLead: { id: "lead-a" },
             members: [
                 member("account-a", MemberRole.ACCOUNT),
                 member("account-b", MemberRole.ACCOUNT),
@@ -46,6 +46,7 @@ test("khi Account tự phân công, Account khác và PM cùng dự án được
     assert.equal(canDecideTaskOutcome(task, "account-a"), false);
     assert.equal(canDecideTaskOutcome(task, "account-b"), true);
     assert.equal(canDecideTaskOutcome(task, "pm-a"), true);
+    assert.equal(canDecideTaskOutcome(task, "lead-a"), false);
     assert.equal(canDecideTaskOutcome(task, "outsider"), false);
 });
 
@@ -72,6 +73,12 @@ test("tự phân công thông báo Account khác và PM cùng dự án", () => {
         getTaskSubmissionReviewRecipientIds(task, "account-a").sort(),
         ["account-b", "pm-a"]
     );
+});
+
+test("Team Lead không nhận thông báo và không được quyết định khi tự phân công", () => {
+    const task = baseTask({ assignerId: "account-a", assigneeId: "account-a" });
+    assert.equal(getTaskSubmissionReviewRecipientIds(task, "account-a").includes("lead-a"), false);
+    assert.equal(canDecideTaskOutcome(task, "lead-a"), false);
 });
 
 test("không thông báo người thực hiện hoặc helper", () => {

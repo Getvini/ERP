@@ -46,7 +46,6 @@ export function canDecideTaskOutcome(task: TaskOutcomeAuthorizationInput, actorU
     if (!isSelfAssigned) return idsMatch(assignerId, actorUserId);
 
     const team = task.project?.team;
-    if (idsMatch(team?.teamLead?.id, actorUserId)) return true;
 
     return team?.members?.some(member =>
         idsMatch(member.user?.id, actorUserId) &&
@@ -84,7 +83,6 @@ export function getTaskSubmissionReviewRecipientIds(
     };
 
     const team = task.project?.team;
-    addRecipient(team?.teamLead?.id);
     for (const member of team?.members || []) {
         if (
             memberHasRole(member as any, MemberRole.ACCOUNT) ||

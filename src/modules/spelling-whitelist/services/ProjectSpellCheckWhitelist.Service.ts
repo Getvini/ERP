@@ -3,6 +3,7 @@ import { SecurityService } from "../../../shared/services/Security.Service";
 import { Projects } from "../../project/entities/Project.entity";
 import { ProjectSpellCheckWhitelists } from "../entities/ProjectSpellCheckWhitelist.entity";
 import { ulid } from "ulid";
+import { In } from "typeorm";
 
 type Actor = { id?: string; userId?: string; role?: string };
 
@@ -69,6 +70,14 @@ export class ProjectSpellCheckWhitelistService {
             results.push(await this.addWord(projectId, word, actor));
         }
         return results;
+    }
+
+    async removeWordsByText(projectId: string, words: string[], actor?: Actor) {
+        await this.assertProjectAccess(projectId, actor);
+        const unique = Array.from(new Set(words.map((word) => word.trim()).filter(Boolean)));
+        if (unique.length === 0) return { deleted: 0 };
+        const result = await this.whitelistRepository.delete({ projectId, word: In(unique) });
+        return { deleted: result.affected ?? 0 };
     }
 
     async removeWord(projectId: string, whitelistId: string, actor?: Actor) {

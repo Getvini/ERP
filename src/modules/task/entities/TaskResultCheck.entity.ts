@@ -1,6 +1,7 @@
 import { Entity, Column, OneToOne, JoinColumn } from "typeorm";
 import { BaseEntity } from "../../../shared/entities/BaseEntity";
 import { Tasks } from "./Task.entity";
+import type { ScanRegion } from "../helpers/ScanScope.helper";
 
 export enum TaskResultCheckStatus {
     PENDING = "PENDING",
@@ -46,11 +47,17 @@ export class TaskResultChecks extends BaseEntity {
     @Column({ type: "text", nullable: true })
     qcErrorMessage: string | null;
 
+    @Column({ type: "text", nullable: true })
+    qcSkippedReason: string | null;
+
     @Column({ type: "simple-json", nullable: true })
     sheetNames: string[];
 
     @Column({ type: "simple-json", nullable: true })
     scenarioIds: string[] | null;
+
+    @Column({ type: "simple-json", nullable: true })
+    scanRegions: ScanRegion[] | null;
 
     @Column({ type: "varchar", nullable: true })
     filteredFileUrl: string | null;
@@ -65,7 +72,7 @@ export class TaskResultChecks extends BaseEntity {
     qcMismatches: Record<string, any>[];
 
     @Column({ type: "simple-json", nullable: true })
-    scannedScenarios: { id: string; sheet: string; scenarioLabel: string; startRow: number | null; endRow: number | null }[] | null;
+    scannedScenarios: { id: string; sheet: string; scenarioLabel: string; startRow: number | null; endRow: number | null; colStart?: number | null; colWidth?: number | null }[] | null;
 
     @Column({ type: "simple-json", nullable: true })
     qcModels: { verify: string } | null;

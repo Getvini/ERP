@@ -1,7 +1,7 @@
 import axios from "axios";
 import { assertAiServiceUrl, AI_SERVICE_MAX_FETCH_BYTES as MAX_FETCH_BYTES, AI_SERVICE_REQUEST_TIMEOUT_MS as REQUEST_TIMEOUT_MS } from "../../../shared/config/aiService";
 
-async function fetchRemoteFile(fileUrl: string): Promise<Buffer> {
+export async function fetchRemoteFile(fileUrl: string): Promise<Buffer> {
     let fileRes;
     try {
         fileRes = await axios.get(fileUrl, {
@@ -45,13 +45,17 @@ export class SpellingCheckService {
         return this.listSheets(buffer, fileName);
     }
 
-    async start(fileBuffer: Buffer, fileName: string, lang: string, sheetNames?: string, whitelist?: string, scenarioIds?: string) {
+    async start(fileBuffer: Buffer, fileName: string, lang: string, sheetNames?: string, whitelist?: string, scenarioIds?: string, regions?: string) {
         const formData = new FormData();
         formData.append("file", new Blob([new Uint8Array(fileBuffer)]), fileName);
         formData.append("lang", lang || "both");
         if (sheetNames) formData.append("sheet_names", sheetNames);
         if (whitelist) formData.append("whitelist", whitelist);
-        if (scenarioIds) formData.append("scenario_ids", scenarioIds);
+        if (scenarioIds !== undefined) {
+            formData.append("scenario_scope", "explicit");
+            if (scenarioIds) formData.append("scenario_ids", scenarioIds);
+        }
+        if (regions) formData.append("regions", regions);
 
         const res = await axios.post(`${assertAiServiceUrl()}/check/start`, formData, {
             timeout: REQUEST_TIMEOUT_MS,
@@ -61,9 +65,9 @@ export class SpellingCheckService {
         return res.data;
     }
 
-    async startFromUrl(fileUrl: string, fileName: string, lang: string, sheetNames?: string, whitelist?: string, scenarioIds?: string) {
+    async startFromUrl(fileUrl: string, fileName: string, lang: string, sheetNames?: string, whitelist?: string, scenarioIds?: string, regions?: string) {
         const buffer = await fetchRemoteFile(fileUrl);
-        return this.start(buffer, fileName, lang, sheetNames, whitelist, scenarioIds);
+        return this.start(buffer, fileName, lang, sheetNames, whitelist, scenarioIds, regions);
     }
 
     async getStatus(jobId: string) {
