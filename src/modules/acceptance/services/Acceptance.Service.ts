@@ -19,8 +19,8 @@ import { Projects, ProjectStatus } from "../../project/entities/Project.entity";
 import { NotificationService } from "../../notification/services/Notification.Service";
 import { VinicoinService } from "../../../shared/services/Vinicoin.Service";
 import { EntityManager, In, Not, ILike } from "typeorm";
-import { UserRole } from "../../account/entities/Account.entity";
 import { acceptanceEmitter, ACCEPTANCE_EVENTS } from "../events/AcceptanceEmitter";
+import { isAcceptanceApprover } from "../helpers/AcceptancePermission.helper";
 
 type AcceptanceActor = { userId?: string; role?: string };
 
@@ -33,12 +33,6 @@ export class AcceptanceService {
   private projectRepo = AppDataSource.getRepository(Projects);
   private notificationService = new NotificationService();
   private vinicoinService = new VinicoinService();
-  private readonly acceptanceRoles = new Set<string>([
-    UserRole.BOD,
-    UserRole.ADMIN,
-    UserRole.ADMIN_SALE,
-    UserRole.PM,
-  ]);
 
   private httpError(message: string, statusCode: number) {
     const error: any = new Error(message);
@@ -52,8 +46,11 @@ export class AcceptanceService {
         "Bạn cần đăng nhập bằng tài khoản nhân sự để nghiệm thu",
         401,
       );
-    if (!actor.role || !this.acceptanceRoles.has(actor.role)) {
-      throw this.httpError("Bạn không có quyền thực hiện nghiệm thu", 403);
+    if (!isAcceptanceApprover(actor.role)) {
+      throw this.httpError(
+        "Bạn chỉ có quyền xem, không có quyền duyệt nghiệm thu",
+        403,
+      );
     }
     return actor.userId;
   }
