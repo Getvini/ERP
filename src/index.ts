@@ -56,10 +56,8 @@ import chatRoomRoute from "./modules/chat-room/routes/ChatRoom.Route"
 import { createServer } from "http"
 import { initSocket } from "./socket"
 import aiDashboardRoute from "./modules/ai-dashboard/routes/AiDashboard.Route"
-import { migrateTeamMemberRoles } from "./modules/project/services/TeamMemberMigration.Service"
 import paymentDashboardRoute from "./modules/payment-dashboard/routes/PaymentDashboard.Route"
 import financeDocumentRoute from "./modules/finance-document/routes/FinanceDocument.Route"
-import { PricingBackfillService } from "./shared/services/PricingBackfill.Service"
 
 const app = express()
 app.set('trust proxy', 1)
@@ -160,8 +158,6 @@ app.head("/health", (req, res) => {
 
 
 AppDataSource.initialize().then(async () => {
-    await PricingBackfillService.run();
-    await migrateTeamMemberRoles();
     // Initialize Event Subscribers
     initSubscribers();
 

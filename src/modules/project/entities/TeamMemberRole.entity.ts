@@ -12,7 +12,6 @@ export class TeamMemberRoles extends BaseEntity {
     @Column({ type: "enum", enum: MemberRole })
     role: MemberRole;
 
-    // Keep the public API compact: roles: ["EDITOR", "SCRIPTER"].
     toJSON() {
         return this.role;
     }

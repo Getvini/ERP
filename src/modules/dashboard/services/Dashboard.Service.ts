@@ -352,7 +352,7 @@ export class DashboardService {
                 const services = project.contract?.services || [];
                 const totalServices = services.length;
                 const completedServices = services.filter(s => s.status === ContractServiceStatus.COMPLETED).length;
-                
+
                 let userRole: string | null = null;
                 if (project.team) {
                     if (project.team.teamLead?.id === userId) {

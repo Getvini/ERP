@@ -22,10 +22,6 @@ export class TeamMembers extends BaseEntity {
     })
     roles: TeamMemberRoles[];
 
-    /**
-     * Transitional column used only while consolidating the previous
-     * one-row-per-role model. New application code must use `roles`.
-     */
     @Column({
         name: "role",
         type: "enum",
