@@ -143,7 +143,7 @@ export class KlingService {
         }
 
         if (dto.multiShot) {
-            payload.multi_shot = "true";
+            payload.multi_shot = true;
             payload.shot_type = dto.shotType || "customize";
 
             if (dto.shotType === "intelligence") {
@@ -156,7 +156,7 @@ export class KlingService {
                 }));
             }
         } else {
-            payload.multi_shot = "false";
+            payload.multi_shot = false;
             payload.prompt = dto.prompt;
         }
 
