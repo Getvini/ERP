@@ -60,6 +60,8 @@ import { DocumentVersions } from "./modules/document-library/entities/DocumentVe
 import { SystemSettings } from "./modules/setting/entities/SystemSetting.entity"
 import { XiangqiPlayers } from "./modules/xiangqi/entities/XiangqiPlayer.entity"
 import { XiangqiGames } from "./modules/xiangqi/entities/XiangqiGame.entity"
+import { TftPlayers } from "./modules/tft/entities/TftPlayer.entity"
+import { TftRuns } from "./modules/tft/entities/TftRun.entity"
 import { StaffRoleWorkloadNorms } from "./modules/setting/entities/StaffRoleWorkloadNorm.entity"
 import { ChatRooms } from "./modules/chat-room/entities/ChatRoom.entity"
 import { ChatParticipants } from "./modules/chat-room/entities/ChatParticipant.entity"
@@ -155,6 +157,8 @@ export const AppDataSource = new DataSource({
         SystemSettings,
         XiangqiPlayers,
         XiangqiGames,
+        TftPlayers,
+        TftRuns,
         StaffRoleWorkloadNorms,
         ChatRooms,
         ChatParticipants,

@@ -6,6 +6,7 @@ import { Accounts } from "./modules/account/entities/Account.entity";
 import { ChatParticipants } from "./modules/chat-room/entities/ChatParticipant.entity";
 import { ChatRoomService } from "./modules/chat-room/services/ChatRoom.Service";
 import { XiangqiService } from "./modules/xiangqi/services/Xiangqi.Service";
+import { TftService } from "./modules/tft/services/Tft.Service";
 
 interface AuthenticatedSocket extends Socket {
     user?: {
@@ -69,6 +70,7 @@ export function initSocket(httpServer: HttpServer) {
     });
 
     void XiangqiService.init(io);
+    TftService.init(io);
 
     io.use(async (socket: AuthenticatedSocket, next) => {
         try {
@@ -116,6 +118,7 @@ export function initSocket(httpServer: HttpServer) {
         console.log(`User connected to Socket.io: ${socket.user?.username} (${socket.id})`);
 
         void XiangqiService.attach(socket); // cờ tướng: ghép trận + ván đấu realtime
+        TftService.attach(socket); // Vini Tactics (PvE): thao tác + trận đấu, không timer nền
 
         socket.on("join_room", (roomId: string) => {
             socket.join(roomId);

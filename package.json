@@ -51,7 +51,8 @@
       "test:opportunity": "node --test -r ts-node/register src/modules/opportunity/**/*.spec.ts",
       "test:scan-scope": "node --test -r ts-node/register src/modules/task/helpers/ScanScope.helper.spec.ts",
       "test:xiangqi": "node --test -r ts-node/register tests/xiangqi.rules.test.ts",
-      "test:xiangqi:e2e": "ts-node tests/xiangqi.e2e.ts"
+      "test:xiangqi:e2e": "ts-node tests/xiangqi.e2e.ts",
+      "test:tft": "node --test -r ts-node/register tests/tft.rules.test.ts tests/tft.service.test.ts"
    },
    "devDependencies": {
       "@types/cookie-parser": "^1.4.10",
