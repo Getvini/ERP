@@ -64,6 +64,29 @@ export class VideoGenerationService {
         }
 
         const isByteplus = model.provider?.code === "byteplus";
+        const isKlingV26 = model.provider?.code === "kling" && model.code === "kling-v2-6";
+
+        if (isKlingV26) {
+            const duration = Number(dto.duration || 5);
+            const mode = dto.mode || "pro";
+            const hasEndFrame = Boolean(dto.endImageAssetId || endImageFile);
+
+            if (dto.multiShot) {
+                throw new Error("Kling Video 2.6 không hỗ trợ Multi-Shot");
+            }
+            if (![5, 10].includes(duration)) {
+                throw new Error("Kling Video 2.6 chỉ hỗ trợ thời lượng 5 hoặc 10 giây");
+            }
+            if (mode !== "std" && mode !== "pro") {
+                throw new Error("Kling Video 2.6 chỉ hỗ trợ chế độ 720P hoặc 1080P");
+            }
+            if (mode === "std" && dto.sound === "on") {
+                throw new Error("Kling Video 2.6 ở chế độ 720P chỉ hỗ trợ video không âm thanh");
+            }
+            if (hasEndFrame && (mode !== "pro" || dto.sound === "on")) {
+                throw new Error("Kling Video 2.6 khi dùng End Frame chỉ hỗ trợ 1080P và không âm thanh");
+            }
+        }
 
         // 3. Validate multi-shot (chỉ Kling hỗ trợ; BytePlus không hỗ trợ multi-shot)
         if (!isByteplus && dto.multiShot) {
