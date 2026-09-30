@@ -58,6 +58,7 @@ import { initSocket } from "./socket"
 import aiDashboardRoute from "./modules/ai-dashboard/routes/AiDashboard.Route"
 import paymentDashboardRoute from "./modules/payment-dashboard/routes/PaymentDashboard.Route"
 import financeDocumentRoute from "./modules/finance-document/routes/FinanceDocument.Route"
+import xiangqiRoute from "./modules/xiangqi/routes/Xiangqi.Route"
 
 const app = express()
 app.set('trust proxy', 1)
@@ -145,6 +146,7 @@ app.use("/api/video-generations", authMiddleware, writeRateLimitMiddleware, vide
 app.use("/api/elements", authMiddleware, writeRateLimitMiddleware, aiElementRoute)
 app.use("/api/document-library", authMiddleware, writeRateLimitMiddleware, documentLibraryRoute)
 app.use("/api/ai-dashboard", authMiddleware, writeRateLimitMiddleware, aiDashboardRoute)
+app.use("/api/xiangqi", authMiddleware, writeRateLimitMiddleware, xiangqiRoute)
 
 app.use("/api/me", profileRoute)
 

@@ -58,6 +58,8 @@ import { AiElementVideos } from "./modules/ai-element/entities/AiElementVideo.en
 import { Documents } from "./modules/document-library/entities/Document.entity"
 import { DocumentVersions } from "./modules/document-library/entities/DocumentVersion.entity"
 import { SystemSettings } from "./modules/setting/entities/SystemSetting.entity"
+import { XiangqiPlayers } from "./modules/xiangqi/entities/XiangqiPlayer.entity"
+import { XiangqiGames } from "./modules/xiangqi/entities/XiangqiGame.entity"
 import { StaffRoleWorkloadNorms } from "./modules/setting/entities/StaffRoleWorkloadNorm.entity"
 import { ChatRooms } from "./modules/chat-room/entities/ChatRoom.entity"
 import { ChatParticipants } from "./modules/chat-room/entities/ChatParticipant.entity"
@@ -151,6 +153,8 @@ export const AppDataSource = new DataSource({
         AiElementImages,
         AiElementVideos,
         SystemSettings,
+        XiangqiPlayers,
+        XiangqiGames,
         StaffRoleWorkloadNorms,
         ChatRooms,
         ChatParticipants,

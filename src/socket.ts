@@ -5,6 +5,7 @@ import { AppDataSource } from "./data-source";
 import { Accounts } from "./modules/account/entities/Account.entity";
 import { ChatParticipants } from "./modules/chat-room/entities/ChatParticipant.entity";
 import { ChatRoomService } from "./modules/chat-room/services/ChatRoom.Service";
+import { XiangqiService } from "./modules/xiangqi/services/Xiangqi.Service";
 
 interface AuthenticatedSocket extends Socket {
     user?: {
@@ -67,6 +68,8 @@ export function initSocket(httpServer: HttpServer) {
         }
     });
 
+    void XiangqiService.init(io);
+
     io.use(async (socket: AuthenticatedSocket, next) => {
         try {
             const token = extractToken(socket);
@@ -111,6 +114,8 @@ export function initSocket(httpServer: HttpServer) {
         }
 
         console.log(`User connected to Socket.io: ${socket.user?.username} (${socket.id})`);
+
+        void XiangqiService.attach(socket); // cờ tướng: ghép trận + ván đấu realtime
 
         socket.on("join_room", (roomId: string) => {
             socket.join(roomId);
