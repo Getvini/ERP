@@ -38,7 +38,7 @@ export class AccountService {
             throw new Error("Không tìm thấy tài khoản");
         }
 
-        const { username, email, role, fullName, phoneNumber, isActive } = data;
+        const { username, email, role, fullName, phoneNumber, birthday, isActive } = data;
 
         // Update Account fields
         if (username !== undefined) account.username = username;
@@ -51,6 +51,7 @@ export class AccountService {
             if (account.user) {
                 if (fullName !== undefined) account.user.fullName = fullName;
                 if (phoneNumber !== undefined) account.user.phoneNumber = phoneNumber;
+                if (birthday !== undefined) account.user.birthday = birthday || null;
                 await transactionalEntityManager.save(account.user);
             }
             await transactionalEntityManager.save(account);

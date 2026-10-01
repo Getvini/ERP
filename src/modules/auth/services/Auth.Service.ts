@@ -16,7 +16,7 @@ export class AuthService {
     private refreshSessionRepository = AppDataSource.getRepository(RefreshSessions);
 
     async register(data: any) {
-        const { username, password, email, fullName, phoneNumber } = data;
+        const { username, password, email, fullName, phoneNumber, birthday } = data;
 
         const existingAccount = await this.accountRepository.findOne({
             where: [
@@ -39,6 +39,7 @@ export class AuthService {
         const user = new Users();
         user.fullName = fullName;
         user.phoneNumber = phoneNumber;
+        user.birthday = birthday || null;
 
         await AppDataSource.transaction(async (transactionalEntityManager) => {
             const savedUser = await transactionalEntityManager.save(user);
@@ -208,6 +209,8 @@ export class AuthService {
         return {
             id: account.user?.id,
             fullName: account.user?.fullName,
+            phoneNumber: account.user?.phoneNumber,
+            birthday: account.user?.birthday,
             role: account.role,
             username: account.username,
             email: account.email

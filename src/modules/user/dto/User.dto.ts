@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, IsEmail, IsEnum, IsBoolean } from "class-validator";
+import { IsString, IsNotEmpty, IsOptional, IsEmail, IsEnum, IsBoolean, IsDateString } from "class-validator";
 import { UserRole } from "../../account/entities/Account.entity";
 
 export class CreateUserDTO {
@@ -22,6 +22,10 @@ export class CreateUserDTO {
     @IsOptional()
     phoneNumber?: string;
 
+    @IsDateString({}, { message: "Ngày sinh không hợp lệ" })
+    @IsOptional()
+    birthday?: string;
+
     @IsBoolean()
     @IsOptional()
     isLocked?: boolean;
@@ -43,6 +47,10 @@ export class UpdateUserDTO {
     @IsString()
     @IsOptional()
     phoneNumber?: string;
+
+    @IsDateString({}, { message: "Ngày sinh không hợp lệ" })
+    @IsOptional()
+    birthday?: string;
 
     @IsEnum(UserRole)
     @IsOptional()

@@ -42,6 +42,7 @@ export class UserService {
                     id: true,
                     fullName: true,
                     phoneNumber: true,
+                    birthday: true,
                     isLocked: true,
                     laborContract: true,
                     accounts: {
@@ -77,6 +78,7 @@ export class UserService {
                     id: true,
                     fullName: true,
                     phoneNumber: true,
+                    birthday: true,
                     isLocked: true,
                     laborContract: true,
                     accounts: {
@@ -105,7 +107,7 @@ export class UserService {
 
     async create(data: any) {
         validateUserData(data);
-        const { username, password, email, fullName, phoneNumber, role, userId, isLocked } = data;
+        const { username, password, email, fullName, phoneNumber, birthday, role, userId, isLocked } = data;
 
         const existingAccount = await this.accountRepository.findOne({
             where: [
@@ -132,6 +134,7 @@ export class UserService {
             user.fullName = fullName;
             user.phoneNumber = phoneNumber;
         }
+        if (birthday !== undefined) user.birthday = birthday || null;
         if (isLocked !== undefined) user.isLocked = isLocked;
 
         let savedUser: Users | null = null;
@@ -153,10 +156,11 @@ export class UserService {
     async update(id: string, data: any) {
         validateUserData(data);
         const user = await this.getUserForMutation(id);
-        const { fullName, phoneNumber, email, role, isActive, username, isLocked } = data;
+        const { fullName, phoneNumber, birthday, email, role, isActive, username, isLocked } = data;
 
         if (fullName !== undefined) user.fullName = fullName;
         if (phoneNumber !== undefined) user.phoneNumber = phoneNumber;
+        if (birthday !== undefined) user.birthday = birthday || null;
         if (isLocked !== undefined) user.isLocked = isLocked;
         if (data.laborContract !== undefined) user.laborContract = data.laborContract;
 
