@@ -4,44 +4,11 @@ import { VendorJobs } from "../entities/VendorJob.entity";
 import { Jobs } from "../../job/entities/Job.entity";
 import { validatePartnerData } from "../validations/Partner.Validation";
 import { RedisService } from "../../../shared/services/Redis.Service";
-import { ServiceService } from "../../service/services/Service.Service";
 import { SecurityService } from "../../../shared/services/Security.Service";
 
 export class VendorService {
     private vendorRepository = AppDataSource.getRepository(Vendors);
     private vendorJobRepository = AppDataSource.getRepository(VendorJobs);
-
-    private async syncJobCostFromVendorPrices(jobId: string) {
-        const jobRepository = AppDataSource.getRepository(Jobs);
-        const job = await jobRepository.findOne({
-            where: SecurityService.withTenant({ id: jobId }),
-            relations: ["serviceJobs"]
-        });
-
-        if (!job) return;
-
-        const vendorJobs = await this.vendorJobRepository.find({
-            where: SecurityService.withTenant({ job: { id: jobId } })
-        });
-
-        const nextCost = vendorJobs.length
-            ? Math.min(...vendorJobs.map(vendorJob => Number(vendorJob.price || 0)))
-            : 0;
-
-        if (Number(job.costPrice || 0) === nextCost) return;
-
-        job.costPrice = nextCost;
-        await jobRepository.save(job);
-
-        if (job.serviceJobs?.length) {
-            const serviceService = new ServiceService();
-            for (const serviceJob of job.serviceJobs) {
-                await serviceService.recalculateCost(serviceJob.serviceId);
-                await RedisService.deleteCache(`services:detail:${serviceJob.serviceId}*`);
-            }
-            await RedisService.deleteCache('services:all*');
-        }
-    }
 
     async getAll() {
         return await RedisService.fetchWithCache(`vendors:${SecurityService.getTenantCachePart()}:all`, 3600, async () => {
@@ -122,7 +89,6 @@ export class VendorService {
         }
 
         const saved = await this.vendorJobRepository.save(vendorJob);
-        await this.syncJobCostFromVendorPrices(jobId);
 
         // Invalidate and detail
         await RedisService.deleteCache('vendors:all*');
@@ -138,7 +104,6 @@ export class VendorService {
         if (!vendorJob) throw new Error("Không tìm thấy hạng mục cần xóa khỏi nhà cung cấp");
 
         await this.vendorJobRepository.remove(vendorJob);
-        await this.syncJobCostFromVendorPrices(jobId);
 
         // Invalidate
         await RedisService.deleteCache('vendors:all*');
