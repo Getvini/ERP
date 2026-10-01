@@ -1,4 +1,8 @@
 import { Router } from "express";
+import multer from "multer";
+import fs from "fs";
+import os from "os";
+import path from "path";
 import { ProjectController } from "../controllers/Project.Controller";
 import { validationMiddleware } from "../../../shared/middlewares/Validation.Middleware";
 import {
@@ -102,9 +106,43 @@ router.put(
 );
 router.post("/:id/monthly-work-addendums", projectController.createMonthlyWorkAddendum);
 router.post("/:id/service-addendums", projectController.createServiceAddendum);
+// Chỉ để trích xuất text: nhận file thẳng từ trình duyệt, ghi tạm ra đĩa, xong là xoá.
+const EXTRACT_TMP_PREFIX = "pd-extract-";
+const EXTRACT_TMP_MAX_AGE_MS = 60 * 60 * 1000;
+const EXTRACT_TMP_SWEEP_INTERVAL_MS = 30 * 60 * 1000;
+
+const extractUpload = multer({
+    storage: multer.diskStorage({
+        destination: (_req, _file, cb) => cb(null, os.tmpdir()),
+        filename: (_req, _file, cb) => cb(null, `${EXTRACT_TMP_PREFIX}${Date.now()}-${Math.round(Math.random() * 1e9)}`)
+    }),
+    limits: { fileSize: 500 * 1024 * 1024, files: 1 }
+});
+
+// Lưới an toàn: controller đã xoá file trong `finally`, nhưng nếu process bị crash/restart
+// hoặc client ngắt kết nối giữa chừng thì file tạm có thể bị mồ côi -> quét và xoá file quá hạn.
+const sweepStaleExtractUploads = async () => {
+    try {
+        const dir = os.tmpdir();
+        for (const name of await fs.promises.readdir(dir)) {
+            if (!name.startsWith(EXTRACT_TMP_PREFIX)) continue;
+            const fullPath = path.join(dir, name);
+            const stat = await fs.promises.stat(fullPath).catch(() => null);
+            if (stat?.isFile() && Date.now() - stat.mtimeMs > EXTRACT_TMP_MAX_AGE_MS) {
+                await fs.promises.unlink(fullPath).catch(() => {});
+            }
+        }
+    } catch {
+        // bỏ qua: việc dọn dẹp không được làm hỏng request
+    }
+};
+void sweepStaleExtractUploads();
+setInterval(() => void sweepStaleExtractUploads(), EXTRACT_TMP_SWEEP_INTERVAL_MS).unref();
+
 router.get("/:id/product-descriptions", projectController.getProductDescriptions);
 router.post("/:id/product-descriptions", projectController.createProductDescription);
 router.post("/:id/product-descriptions/extract-file", projectController.extractProductDescriptionFile);
+router.post("/:id/product-descriptions/extract-upload", extractUpload.single("file"), projectController.extractProductDescriptionUpload);
 router.post("/:id/product-descriptions/ai-format", projectController.aiFormatProductDescription);
 router.put("/:id/product-descriptions/:submissionId", projectController.updateProductDescription);
 router.post("/:id/product-descriptions/:submissionId/submit", projectController.submitProductDescription);

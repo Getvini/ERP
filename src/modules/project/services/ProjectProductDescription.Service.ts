@@ -1,4 +1,6 @@
 import axios from "axios";
+import fs from "fs";
+import path from "path";
 import { AppDataSource } from "../../../data-source";
 import { SecurityService } from "../../../shared/services/Security.Service";
 import { UserRole } from "../../account/entities/Account.entity";
@@ -176,6 +178,36 @@ export class ProjectProductDescriptionService {
         };
     }
 
+    // Gửi file thẳng sang AI service (field `file`) -> không cần Cloudinary, không bị giới hạn 10MB của Cloudinary
+    async extractForUpload(projectId: string, file: Express.Multer.File, actor?: Actor) {
+        const project = await this.assertProjectAccess(projectId, actor);
+        this.assertCanEditProductDescription(project, actor);
+
+        const ext = path.extname(file.originalname || "").toLowerCase();
+        if (![".pdf", ".docx"].includes(ext)) {
+            throw this.httpError("Chỉ hỗ trợ trích xuất từ file .pdf hoặc .docx", 400);
+        }
+
+        const aiServiceUrl = assertAiServiceUrl();
+        const formData = new FormData();
+        formData.append("file", new Blob([await fs.promises.readFile(file.path)]), file.originalname);
+        try {
+            const response = await axios.post(`${aiServiceUrl}/documents/extract`, formData, {
+                timeout: AI_SERVICE_REQUEST_TIMEOUT_MS,
+                maxBodyLength: AI_SERVICE_MAX_FETCH_BYTES,
+                maxContentLength: AI_SERVICE_MAX_FETCH_BYTES
+            });
+            const text: string | null = response.data?.text ?? null;
+            return {
+                extractedText: text ? this.textToHtml(text) : null,
+                hasComplexLayout: Boolean(response.data?.has_complex_layout)
+            };
+        } catch (error: any) {
+            const message = error?.response?.data?.detail || error?.message || "Không thể trích xuất nội dung file";
+            throw this.httpError(message, 400);
+        }
+    }
+
     async extractForFile(projectId: string, fileUrl: string, actor?: Actor) {
         const project = await this.assertProjectAccess(projectId, actor);
         this.assertCanEditProductDescription(project, actor);
@@ -231,7 +263,8 @@ export class ProjectProductDescriptionService {
             }
 
             const fileUrl = item.fileUrl?.trim() || "";
-            if (!fileUrl) {
+            const hasExtractedText = typeof item.extractedText === "string" && item.extractedText.trim().length > 0;
+            if (!fileUrl && !hasExtractedText) {
                 throw this.httpError(`Vui lòng upload file thông tin chuẩn (doc/pdf) cho sản phẩm ${productName}`, 400);
             }
 
@@ -240,7 +273,7 @@ export class ProjectProductDescriptionService {
             const providedExtractedText = typeof item.extractedText === "string" ? item.extractedText.trim() : "";
             const extractedText = providedExtractedText
                 ? providedExtractedText
-                : (await this.extractFileText(fileUrl)).extractedText;
+                : fileUrl ? (await this.extractFileText(fileUrl)).extractedText : null;
             const documents = Array.isArray(item.documents)
                 ? item.documents
                     .filter((doc) => doc?.url?.trim())
