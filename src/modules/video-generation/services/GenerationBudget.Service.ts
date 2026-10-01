@@ -5,7 +5,7 @@ import { VideoGenerations } from "../entities/VideoGeneration.entity";
 import { MotionGenerations } from "../entities/MotionGeneration.entity";
 import { OpportunityServiceJobs } from "../../opportunity-service/entities/OpportunityServiceJob.entity";
 
-const RELEASED_STATUSES = ["failed", "cancelled"];
+const RELEASED_STATUSES = ["failed", "provider_failed", "cancelled"];
 
 export interface GenerationBudgetSnapshot {
     budgetMode: "LIMITED" | "UNLIMITED";

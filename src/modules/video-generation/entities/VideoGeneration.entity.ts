@@ -57,10 +57,25 @@ export class VideoGenerations {
 
     // ── Status & external task ───────────────────────────────────────────────
     @Column({ length: 50, default: "pending" })
-    status!: string; // pending | queued | processing | succeeded | failed | cancelled
+    status!: string; // pending | queued | processing | delayed | provider_succeeded | uploading | upload_failed | succeeded | provider_failed | failed | cancelled
 
     @Column({ name: "external_task_id", length: 255, nullable: true })
     externalTaskId?: string;
+
+    @Column({ name: "external_reference_id", length: 255, nullable: true, unique: true })
+    externalReferenceId?: string;
+
+    @Column({ name: "next_poll_at", type: "timestamptz", nullable: true })
+    nextPollAt?: Date;
+
+    @Column({ name: "last_polled_at", type: "timestamptz", nullable: true })
+    lastPolledAt?: Date;
+
+    @Column({ name: "poll_attempts", type: "int", default: 0 })
+    pollAttempts!: number;
+
+    @Column({ name: "reconcile_lease_until", type: "timestamptz", nullable: true })
+    reconcileLeaseUntil?: Date;
 
     // ── Video settings ───────────────────────────────────────────────────────
     /** std | pro | 4k | 480p | 720p | 1080p — DB default: 'std' */

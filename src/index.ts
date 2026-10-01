@@ -50,6 +50,7 @@ import aiProviderRoute from "./modules/ai-provider/routes/AiProvider.Route"
 import aiModelRoute from "./modules/ai-model/routes/AiModel.Route"
 import assetRoute from "./modules/asset/routes/Asset.Route"
 import videoGenerationRoute from "./modules/video-generation/routes/VideoGeneration.Route"
+import klingWebhookRoute from "./modules/video-generation/routes/KlingWebhook.Route"
 import aiElementRoute from "./modules/ai-element/routes/AiElement.Route"
 import documentLibraryRoute from "./modules/document-library/routes/DocumentLibrary.Route"
 import chatRoomRoute from "./modules/chat-room/routes/ChatRoom.Route"
@@ -65,7 +66,13 @@ app.set('etag', false)
 const port = 3000
 const httpServer = createServer(app)
 
-app.use(express.json())
+app.use(express.json({
+    verify: (req: any, _res, buffer) => {
+        if (req.path === "/api/video-generations/kling/callback") {
+            req.rawBody = Buffer.from(buffer);
+        }
+    },
+}))
 app.use(express.urlencoded({ extended: true }))
 app.use(cookieParser())
 const allowedOrigins = process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(",") : [];
@@ -99,6 +106,9 @@ app.use("/api", (req, res, next) => {
     next();
 });
 
+// Public signed webhook: keep it outside the user API rate limiter so Kling can
+// reliably deliver completion events and retries.
+app.use("/api/video-generations/kling", klingWebhookRoute)
 app.use("/api", globalApiLimiter)
 
 app.use("/api/auth", authRoute)

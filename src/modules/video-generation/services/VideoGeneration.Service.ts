@@ -3,13 +3,13 @@ import { VideoGenerations } from "../entities/VideoGeneration.entity";
 import { AiModels } from "../../ai-model/entities/AiModel.entity";
 import { Projects } from "../../project/entities/Project.entity";
 import { AssetService } from "../../asset/services/Asset.Service";
-import { CloudinaryVideoAiService } from "../../cloudinary/services/CloudinaryVideoAi.Service";
 import { KlingService } from "../../kling/services/Kling.Service";
 import { ByteplusService } from "../../byteplus/services/Byteplus.Service";
 import { CreateVideoDto } from "../dto/CreateVideo.dto";
 import { Tasks } from "../../task/entities/Task.entity";
 import { Opportunities } from "../../opportunity/entities/Opportunity.entity";
 import { GenerationBudgetService } from "./GenerationBudget.Service";
+import { KlingWebhookService } from "./KlingWebhook.Service";
 
 export class VideoGenerationService {
     private videoGenRepository = AppDataSource.getRepository(VideoGenerations);
@@ -20,7 +20,6 @@ export class VideoGenerationService {
     private generationBudgetService = new GenerationBudgetService();
 
     private assetService = new AssetService();
-    private cloudinaryVideoAiService = new CloudinaryVideoAiService();
     private klingService = new KlingService();
     private byteplusService = new ByteplusService();
 
@@ -175,6 +174,9 @@ export class VideoGenerationService {
             ),
         );
 
+        const externalReferenceId = `video-generation-${saved.id}`;
+        await this.videoGenRepository.update(saved.id, { externalReferenceId });
+
         // 7. Rẽ nhánh theo provider: Kling hay BytePlus
         let externalTaskId: string;
         let responsePayloadRaw: any;
@@ -205,6 +207,8 @@ export class VideoGenerationService {
                     multiShot: dto.multiShot,
                     shotType: dto.shotType,
                     multiPrompt: dto.multiPrompt,
+                    callbackUrl: KlingWebhookService.getCallbackUrl(),
+                    externalTaskId: externalReferenceId,
                 });
 
                 if (klingCreate.code !== 0) throw new Error(`Kling error: ${klingCreate.message}`);
@@ -213,28 +217,27 @@ export class VideoGenerationService {
             }
 
             await this.videoGenRepository.update(saved.id, {
-                status: "queued",
                 externalTaskId,
+                externalReferenceId,
                 responsePayload: responsePayloadRaw,
             });
+            await this.videoGenRepository
+                .createQueryBuilder()
+                .update(VideoGenerations)
+                .set({
+                    status: "queued",
+                    nextPollAt: new Date(),
+                })
+                .where("id = :id", { id: saved.id })
+                .andWhere("status = :status", { status: "pending" })
+                .execute();
         } catch (error: any) {
             await this.videoGenRepository.update(saved.id, {
-                status: "failed",
+                status: "provider_failed",
                 errorMessage: error.message,
                 completedAt: new Date(),
             });
             throw error;
-        }
-
-        // 8. Polling ngầm — chọn theo provider
-        if (isByteplus) {
-            this.pollAndSaveResultByteplus(saved.id, externalTaskId, userId).catch((err) =>
-                console.error(`[VideoGen] BytePlus polling error: ${err.message}`),
-            );
-        } else {
-            this.pollAndSaveResult(saved.id, externalTaskId, userId).catch((err) =>
-                console.error(`[VideoGen] Kling polling error: ${err.message}`),
-            );
         }
 
         return {
@@ -265,92 +268,6 @@ export class VideoGenerationService {
             return dto.multiPrompt.map((s) => `[Shot ${s.index}] ${s.prompt} (${s.duration}s)`).join(" | ");
         }
         return dto.prompt || "";
-    }
-
-    private async pollAndSaveResult(videoGenId: number, taskId: string, userId: string) {
-        try {
-            await this.videoGenRepository.update(videoGenId, { status: "processing" });
-            const taskResult = await this.klingService.pollUntilDone(taskId, 30000, 40);
-            const videoData = taskResult.task_result?.videos?.[0];
-            if (!videoData) throw new Error("Kling trả về succeed nhưng không có video URL");
-
-            const videoGen = await this.videoGenRepository.findOne({ where: { id: videoGenId } });
-            const cloudinaryVideoUrl = await this.cloudinaryVideoAiService.uploadVideoFromUrl(
-                videoData.url,
-                `ai-generation/users/${userId}/${videoGen?.projectId ? `projects/${videoGen.projectId}` : `opportunities/${videoGen?.opportunityId}`}/videos/output`,
-                `video_${videoGenId}_${Date.now()}`,
-            );
-
-            const videoAsset = await this.assetService.createGeneratedAsset({
-                userId,
-                projectId: videoGen?.projectId,
-                assetType: "video",
-                assetRole: "scene_video",
-                sourceType: "generated",
-                originalUrl: videoData.url,
-                storedUrl: cloudinaryVideoUrl,
-                storageProvider: "cloudinary",
-                durationSeconds: videoData.duration ? Math.round(parseFloat(videoData.duration)) : undefined,
-                metadata: { kling_video_id: videoData.id, duration: videoData.duration },
-            });
-
-            await this.videoGenRepository.update(videoGenId, {
-                status: "succeeded",
-                outputAssetId: videoAsset.id,
-                completedAt: new Date(),
-                resultPayload: taskResult as any,
-            });
-        } catch (err: any) {
-            console.error(`[VideoGen ${videoGenId}] FAILED: ${err.message}`);
-            await this.videoGenRepository.update(videoGenId, {
-                status: "failed",
-                errorMessage: err.message,
-                completedAt: new Date(),
-            });
-        }
-    }
-
-    private async pollAndSaveResultByteplus(videoGenId: number, taskId: string, userId: string) {
-        try {
-            await this.videoGenRepository.update(videoGenId, { status: "processing" });
-            const taskResult = await this.byteplusService.pollUntilDone(taskId, 30000, 40);
-            const videoUrl = taskResult.content?.video_url;
-            if (!videoUrl) throw new Error("BytePlus trả về succeeded nhưng không có video URL");
-
-            const videoGen = await this.videoGenRepository.findOne({ where: { id: videoGenId } });
-            const cloudinaryVideoUrl = await this.cloudinaryVideoAiService.uploadVideoFromUrl(
-                videoUrl,
-                `ai-generation/users/${userId}/${videoGen?.projectId ? `projects/${videoGen.projectId}` : `opportunities/${videoGen?.opportunityId}`}/videos/output`,
-                `video_${videoGenId}_${Date.now()}`,
-            );
-
-            const videoAsset = await this.assetService.createGeneratedAsset({
-                userId,
-                projectId: videoGen?.projectId,
-                assetType: "video",
-                assetRole: "scene_video",
-                sourceType: "generated",
-                originalUrl: videoUrl,
-                storedUrl: cloudinaryVideoUrl,
-                storageProvider: "cloudinary",
-                durationSeconds: taskResult.duration ? Math.round(Number(taskResult.duration)) : undefined,
-                metadata: { byteplus_task_id: taskResult.id, duration: taskResult.duration },
-            });
-
-            await this.videoGenRepository.update(videoGenId, {
-                status: "succeeded",
-                outputAssetId: videoAsset.id,
-                completedAt: new Date(),
-                resultPayload: taskResult as any,
-            });
-        } catch (err: any) {
-            console.error(`[VideoGen ${videoGenId}] BytePlus FAILED: ${err.message}`);
-            await this.videoGenRepository.update(videoGenId, {
-                status: "failed",
-                errorMessage: err.message,
-                completedAt: new Date(),
-            });
-        }
     }
 
     async getStatus(id: number) {

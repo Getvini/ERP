@@ -9,12 +9,35 @@ import { ProjectPauseService } from '../../modules/project/services/ProjectPause
 import { VinicoinTransactions, VinicoinTransactionType } from '../../modules/vinicoin/entities/VinicoinTransaction.entity';
 import { LessThan, MoreThan, In } from 'typeorm';
 import { ulid } from 'ulid';
+import { VideoGenerationReconciliationService } from '../../modules/video-generation/services/VideoGenerationReconciliation.Service';
 
 export class CronHelper {
+    private static videoReconciliationRunning = false;
+
     /**
      * Initializes all cron jobs for the application.
      */
     static init() {
+        /**
+         * Video generation reconciliation.
+         * Callback là luồng chính; job này tự phục hồi khi callback bị mất,
+         * server restart hoặc upload Cloudinary cần retry.
+         */
+        cron.schedule('* * * * *', async () => {
+            if (CronHelper.videoReconciliationRunning) return;
+            CronHelper.videoReconciliationRunning = true;
+            try {
+                const processed = await new VideoGenerationReconciliationService().reconcilePending();
+                if (processed > 0) {
+                    console.log(`[Cron] Reconciled ${processed} video generation task(s).`);
+                }
+            } catch (error) {
+                console.error('[Cron] Error reconciling video generations:', error);
+            } finally {
+                CronHelper.videoReconciliationRunning = false;
+            }
+        });
+
         /**
          * Task Status Expiry Job
          * Runs every 30 minutes to check for tasks that have passed their deadline.
