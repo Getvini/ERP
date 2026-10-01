@@ -1,4 +1,6 @@
 import { Router } from "express";
+import multer from "multer";
+import os from "os";
 import { ProjectController } from "../controllers/Project.Controller";
 import { validationMiddleware } from "../../../shared/middlewares/Validation.Middleware";
 import {
@@ -102,9 +104,19 @@ router.put(
 );
 router.post("/:id/monthly-work-addendums", projectController.createMonthlyWorkAddendum);
 router.post("/:id/service-addendums", projectController.createServiceAddendum);
+// Chỉ để trích xuất text: nhận file thẳng từ trình duyệt, ghi tạm ra đĩa, xong là xoá.
+const extractUpload = multer({
+    storage: multer.diskStorage({
+        destination: (_req, _file, cb) => cb(null, os.tmpdir()),
+        filename: (_req, _file, cb) => cb(null, `pd-extract-${Date.now()}-${Math.round(Math.random() * 1e9)}`)
+    }),
+    limits: { fileSize: 500 * 1024 * 1024, files: 1 }
+});
+
 router.get("/:id/product-descriptions", projectController.getProductDescriptions);
 router.post("/:id/product-descriptions", projectController.createProductDescription);
 router.post("/:id/product-descriptions/extract-file", projectController.extractProductDescriptionFile);
+router.post("/:id/product-descriptions/extract-upload", extractUpload.single("file"), projectController.extractProductDescriptionUpload);
 router.post("/:id/product-descriptions/ai-format", projectController.aiFormatProductDescription);
 router.put("/:id/product-descriptions/:submissionId", projectController.updateProductDescription);
 router.post("/:id/product-descriptions/:submissionId/submit", projectController.submitProductDescription);

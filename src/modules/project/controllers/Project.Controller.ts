@@ -1,4 +1,5 @@
 import { Request, Response } from "express";
+import fs from "fs";
 import { ProjectService } from "../services/Project.Service";
 import { ProjectProductDescriptionService } from "../services/ProjectProductDescription.Service";
 import { AuthRequest } from "../../../shared/middlewares/Auth.Middleware";
@@ -132,6 +133,25 @@ export class ProjectController {
             res.status(200).json(result);
         } catch (error: any) {
             res.status(error.statusCode || 500).json({ message: error.message });
+        }
+    }
+
+    extractProductDescriptionUpload = async (req: AuthRequest, res: Response) => {
+        const file = (req as any).file as Express.Multer.File | undefined;
+        try {
+            if (!file) {
+                return res.status(400).json({ message: "Vui lòng chọn file" });
+            }
+            const result = await this.productDescriptionService.extractForUpload(
+                req.params.id as string,
+                file,
+                req.user as any
+            );
+            res.status(200).json(result);
+        } catch (error: any) {
+            res.status(error.statusCode || 500).json({ message: error.message });
+        } finally {
+            if (file?.path) fs.unlink(file.path, () => {});
         }
     }
 
