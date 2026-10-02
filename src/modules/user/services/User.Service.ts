@@ -126,7 +126,7 @@ export class UserService {
         account.username = username;
         account.password = hashedPassword;
         account.email = email;
-        account.role = role || UserRole.STAFF_D;
+        account.role = role || UserRole.EDITOR_D;
 
         let user = userId ? await this.userRepository.findOne({ where: { id: userId } }) : null;
         if (!user) {

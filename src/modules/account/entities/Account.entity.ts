@@ -8,6 +8,18 @@ export enum UserRole {
     ADMIN_SALE = "ADMIN_SALE",
     BD = "BD",
     PM = "PM",
+    CONTENT_A = "CONTENT_A",
+    CONTENT_B = "CONTENT_B",
+    CONTENT_C = "CONTENT_C",
+    CONTENT_D = "CONTENT_D",
+    EDITOR_A = "EDITOR_A",
+    EDITOR_B = "EDITOR_B",
+    EDITOR_C = "EDITOR_C",
+    EDITOR_D = "EDITOR_D",
+    DESIGNER_A = "DESIGNER_A",
+    DESIGNER_B = "DESIGNER_B",
+    DESIGNER_C = "DESIGNER_C",
+    DESIGNER_D = "DESIGNER_D",
     STAFF_A = "STAFF_A",
     STAFF_B = "STAFF_B",
     STAFF_C = "STAFF_C",
@@ -15,6 +27,18 @@ export enum UserRole {
 }
 
 export const STAFF_ROLES = [
+    UserRole.CONTENT_A,
+    UserRole.CONTENT_B,
+    UserRole.CONTENT_C,
+    UserRole.CONTENT_D,
+    UserRole.EDITOR_A,
+    UserRole.EDITOR_B,
+    UserRole.EDITOR_C,
+    UserRole.EDITOR_D,
+    UserRole.DESIGNER_A,
+    UserRole.DESIGNER_B,
+    UserRole.DESIGNER_C,
+    UserRole.DESIGNER_D,
     UserRole.STAFF_A,
     UserRole.STAFF_B,
     UserRole.STAFF_C,
@@ -58,7 +82,7 @@ export class Accounts extends BaseEntity {
     @Column({
         type: "enum",
         enum: UserRole,
-        default: UserRole.STAFF_D
+        default: UserRole.EDITOR_D
     })
     role: UserRole;
 
