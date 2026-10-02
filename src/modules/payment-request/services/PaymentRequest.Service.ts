@@ -5,6 +5,8 @@ import {
     PaymentRequestType,
     PaymentRequestApprovalStatus,
     PaymentDueStatus,
+    PaymentMethod,
+    CashVoucherInfo,
     PaymentRequestFile,
     PaymentRequestHistoryEntry
 } from "../entities/PaymentRequest.entity";
@@ -25,6 +27,11 @@ export interface PaymentRequestQuery {
     approvalStatus?: PaymentRequestApprovalStatus;
     paymentStatus?: PaymentDueStatus;
     projectId?: string;
+    fromDate?: string;
+    toDate?: string;
+    dateField?: "dueDate" | "createdAt";
+    minAmount?: number | string;
+    maxAmount?: number | string;
     sortBy?: "createdAt" | "amount" | "dueDate";
     sortOrder?: "ASC" | "DESC";
 }
@@ -189,6 +196,21 @@ export class PaymentRequestService {
                 throw new Error("Công việc này không được giao cho bạn");
             }
             request.costPrice = task.cost;
+        } else if (dto.type === PaymentRequestType.OTHER_WORK) {
+            if (!dto.taskId) {
+                throw new Error("Vui lòng chọn công việc không thuộc dự án");
+            }
+            const task = await this.taskRepo.findOne({ where: { id: dto.taskId }, relations: ["project", "assignee"] });
+            if (!task) {
+                throw new Error("Không tìm thấy công việc");
+            }
+            if (task.project) {
+                throw new Error("Công việc đã chọn thuộc dự án, không phải công việc khác");
+            }
+            if (!task.assigneeId || task.assigneeId !== requesterId) {
+                throw new Error("Công việc này không được giao cho bạn");
+            }
+            request.costPrice = task.cost;
         }
 
         this.pushHistory(request, {
@@ -304,6 +326,21 @@ export class PaymentRequestService {
             qb.andWhere("pr.projectId = :projectId", { projectId: query.projectId });
         }
 
+        const dateCol = query.dateField === "createdAt" ? "pr.createdAt" : "COALESCE(pr.confirmedDueDate, pr.dueDate)";
+        if (query.fromDate) {
+            qb.andWhere(`${dateCol} >= :fromDate`, { fromDate: new Date(`${query.fromDate}T00:00:00.000`) });
+        }
+        if (query.toDate) {
+            qb.andWhere(`${dateCol} <= :toDate`, { toDate: new Date(`${query.toDate}T23:59:59.999`) });
+        }
+
+        if (query.minAmount !== undefined && query.minAmount !== "" && !isNaN(Number(query.minAmount))) {
+            qb.andWhere("pr.amount >= :minAmount", { minAmount: Number(query.minAmount) });
+        }
+        if (query.maxAmount !== undefined && query.maxAmount !== "" && !isNaN(Number(query.maxAmount))) {
+            qb.andWhere("pr.amount <= :maxAmount", { maxAmount: Number(query.maxAmount) });
+        }
+
         // Phân quyền hiển thị: chỉ Admin Sale/BOD/Admin thấy toàn bộ, còn lại chỉ thấy yêu cầu do
         // chính mình tạo (bao gồm cả chi phí phát sinh vendor vì requesterId là người phân công).
         if (viewer && !FULL_VISIBILITY_ROLES.includes(viewer.role as UserRole)) {
@@ -340,6 +377,14 @@ export class PaymentRequestService {
 
     async update(id: string, dto: any) {
         const request = await this.getOne(id);
+
+        if (dto.cashVoucherInfo !== undefined || dto.paymentMethod !== undefined) {
+            if (dto.cashVoucherInfo !== undefined) request.cashVoucherInfo = dto.cashVoucherInfo;
+            if (dto.paymentMethod !== undefined) request.paymentMethod = dto.paymentMethod;
+            if (Object.keys(dto).every((k) => ["cashVoucherInfo", "paymentMethod"].includes(k))) {
+                return await this.repo.save(request);
+            }
+        }
 
         if (request.approvalStatus === PaymentRequestApprovalStatus.NEED_MORE_DOCS) {
             throw new Error("Yêu cầu này đang cần bổ sung, vui lòng dùng chức năng bổ sung để giữ lại lịch sử");
@@ -386,6 +431,18 @@ export class PaymentRequestService {
                     throw new Error("Công việc không còn được giao cho vendor này");
                 }
             } else if (!task.assigneeId || task.assigneeId !== request.requesterId) {
+                throw new Error("Công việc này không được giao cho bạn");
+            }
+            request.costPrice = task.cost;
+        } else if (request.type === PaymentRequestType.OTHER_WORK && request.taskId) {
+            const task = await this.taskRepo.findOne({ where: { id: request.taskId }, relations: ["project"] });
+            if (!task) {
+                throw new Error("Không tìm thấy công việc");
+            }
+            if (task.project) {
+                throw new Error("Công việc đã chọn thuộc dự án, không phải công việc khác");
+            }
+            if (!task.assigneeId || task.assigneeId !== request.requesterId) {
                 throw new Error("Công việc này không được giao cho bạn");
             }
             request.costPrice = task.cost;
@@ -577,7 +634,7 @@ export class PaymentRequestService {
         return saved;
     }
 
-    async bodDecision(id: string, action: "APPROVE" | "REJECT", reason: string, bodUserId: string, confirmedDueDate?: string) {
+    async bodDecision(id: string, action: "APPROVE" | "REJECT" | "REQUEST_MORE_DOCS", reason: string, bodUserId: string, confirmedDueDate?: string) {
         const request = await this.getOne(id);
 
         if (request.approvalStatus !== PaymentRequestApprovalStatus.PENDING_BOD) {
@@ -602,10 +659,15 @@ export class PaymentRequestService {
                 }
             }
         } else if (action === "REJECT") {
-            if (!reason) {
+            if (!reason || !reason.trim()) {
                 throw new Error("Vui lòng nhập lý do từ chối");
             }
             request.approvalStatus = PaymentRequestApprovalStatus.REJECTED;
+        } else if (action === "REQUEST_MORE_DOCS") {
+            if (!reason || !reason.trim()) {
+                throw new Error("Vui lòng nhập lý do yêu cầu bổ sung");
+            }
+            request.approvalStatus = PaymentRequestApprovalStatus.NEED_MORE_DOCS;
         } else {
             throw new Error("Hành động không hợp lệ");
         }
@@ -629,11 +691,19 @@ export class PaymentRequestService {
                 relatedEntityId: saved.id,
                 link: `/payment-requests/${saved.id}`
             });
-        } else {
+        } else if (action === "REJECT") {
             await this.notifyUser(saved.requesterId, {
                 title: "Yêu cầu thanh toán bị BOD từ chối",
                 content: `Yêu cầu thanh toán "${saved.content}" đã bị BOD từ chối${reason ? `: ${reason}` : "."}`,
                 type: "PAYMENT_REQUEST_REJECTED",
+                relatedEntityId: saved.id,
+                link: `/payment-requests/${saved.id}`
+            });
+        } else if (action === "REQUEST_MORE_DOCS") {
+            await this.notifyUser(saved.requesterId, {
+                title: "Yêu cầu thanh toán cần bổ sung",
+                content: `Yêu cầu thanh toán "${saved.content}" bị BOD yêu cầu bổ sung hồ sơ${reason ? `: ${reason}` : "."}`,
+                type: "PAYMENT_REQUEST_NEED_MORE_DOCS",
                 relatedEntityId: saved.id,
                 link: `/payment-requests/${saved.id}`
             });
@@ -642,7 +712,11 @@ export class PaymentRequestService {
         return saved;
     }
 
-    async pay(id: string, dto: { paymentProofs?: PaymentRequestFile[] }, payerId?: string) {
+    async pay(id: string, dto: {
+        paymentMethod?: PaymentMethod;
+        paymentProofs?: PaymentRequestFile[];
+        cashVoucherInfo?: CashVoucherInfo;
+    }, payerId?: string) {
         const request = await this.getOne(id);
 
         if (request.approvalStatus !== PaymentRequestApprovalStatus.APPROVED) {
@@ -653,11 +727,22 @@ export class PaymentRequestService {
             throw new Error("Vui lòng tải lên ảnh/PDF minh chứng đã chi tiền");
         }
 
+        if (dto.paymentMethod) {
+            request.paymentMethod = dto.paymentMethod;
+        }
+        if (dto.cashVoucherInfo) {
+            request.cashVoucherInfo = dto.cashVoucherInfo;
+        }
+
         request.paymentProofs = dto.paymentProofs.map((file) => ({ ...file, uploadedAt: file.uploadedAt || new Date().toISOString() }));
         request.paidAt = new Date();
         request.paymentStatus = PaymentDueStatus.PAID;
 
-        this.pushHistory(request, { action: "PAID", byId: payerId || "system" });
+        const historyNote = dto.paymentMethod === PaymentMethod.CASH
+            ? `Chi tiền mặt (Phiếu chi: ${dto.cashVoucherInfo?.voucherNo || "N/A"})`
+            : "Chi bằng chuyển khoản";
+
+        this.pushHistory(request, { action: "PAID", byId: payerId || "system", note: historyNote });
         const saved = await this.repo.save(request);
 
         await this.notifyUser(saved.requesterId, {
@@ -806,19 +891,50 @@ export class PaymentRequestService {
         };
     }
 
-    async getTotalDebt(query: Pick<PaymentRequestQuery, "projectId" | "type">) {
+    async getTotalDebt(query: PaymentRequestQuery, viewer?: PaymentRequestViewer) {
         const qb = this.repo.createQueryBuilder("pr")
             .where("pr.approvalStatus = :approved", { approved: PaymentRequestApprovalStatus.APPROVED })
             .andWhere("pr.paidAt IS NULL");
 
-        if (query.projectId) {
-            qb.andWhere("pr.projectId = :projectId", { projectId: query.projectId });
+        if (query.search) {
+            qb.andWhere("pr.content ILIKE :search", { search: `%${query.search}%` });
         }
         if (isValidRequestType(query.type)) {
             qb.andWhere("pr.type = :type", { type: query.type });
         }
+        if (query.projectId) {
+            qb.andWhere("pr.projectId = :projectId", { projectId: query.projectId });
+        }
 
-        const { total } = await qb.select("COALESCE(SUM(pr.amount), 0)", "total").getRawOne();
-        return { totalDebt: Number(total) };
+        const dateCol = query.dateField === "createdAt" ? "pr.createdAt" : "COALESCE(pr.confirmedDueDate, pr.dueDate)";
+        if (query.fromDate) {
+            qb.andWhere(`${dateCol} >= :fromDate`, { fromDate: new Date(`${query.fromDate}T00:00:00.000`) });
+        }
+        if (query.toDate) {
+            qb.andWhere(`${dateCol} <= :toDate`, { toDate: new Date(`${query.toDate}T23:59:59.999`) });
+        }
+
+        if (query.minAmount !== undefined && query.minAmount !== "" && !isNaN(Number(query.minAmount))) {
+            qb.andWhere("pr.amount >= :minAmount", { minAmount: Number(query.minAmount) });
+        }
+        if (query.maxAmount !== undefined && query.maxAmount !== "" && !isNaN(Number(query.maxAmount))) {
+            qb.andWhere("pr.amount <= :maxAmount", { maxAmount: Number(query.maxAmount) });
+        }
+
+        if (viewer && !FULL_VISIBILITY_ROLES.includes(viewer.role as UserRole)) {
+            qb.andWhere("pr.requesterId = :viewerId", { viewerId: viewer.userId });
+        }
+
+        const raw = await qb.select([
+            "COALESCE(SUM(pr.amount), 0) AS total",
+            "COALESCE(SUM(CASE WHEN pr.type = 'PROJECT' THEN pr.amount ELSE 0 END), 0) AS project_debt",
+            "COALESCE(SUM(CASE WHEN pr.type = 'OTHER_WORK' THEN pr.amount ELSE 0 END), 0) AS other_work_debt"
+        ]).getRawOne();
+
+        return {
+            totalDebt: Number(raw?.total || 0),
+            projectDebt: Number(raw?.project_debt || 0),
+            otherWorkDebt: Number(raw?.other_work_debt || 0)
+        };
     }
 }

@@ -49,9 +49,11 @@ export class PaymentRequestController {
         }
     }
 
-    getTotalDebt = async (req: Request, res: Response) => {
+    getTotalDebt = async (req: AuthRequest, res: Response) => {
         try {
-            const result = await this.service.getTotalDebt(req.query as any);
+            const viewerId = req.user?.userId || req.user?.id;
+            const viewer = viewerId ? { userId: viewerId, role: req.user?.role as string } : undefined;
+            const result = await this.service.getTotalDebt(req.query as any, viewer);
             res.status(200).json(result);
         } catch (error: any) {
             res.status(500).json({ message: error.message });
