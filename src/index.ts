@@ -65,7 +65,8 @@ app.set('etag', false)
 const port = 3000
 const httpServer = createServer(app)
 
-app.use(express.json())
+// Mặc định 100kb là quá nhỏ cho nội dung trích xuất/AI format của tài liệu dài
+app.use(express.json({ limit: "5mb" }))
 app.use(express.urlencoded({ extended: true }))
 app.use(cookieParser())
 const allowedOrigins = process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(",") : [];

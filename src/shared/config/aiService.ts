@@ -16,6 +16,7 @@ export function assertAiServiceUrl(): string {
 
 export const AI_SERVICE_MAX_FETCH_BYTES = 500 * 1024 * 1024;
 
-export const AI_SERVICE_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
+// Đọc ảnh nhiều trang bằng vision có thể kéo dài; nginx (erp-UI/nginx.conf) cũng phải >= giá trị này
+export const AI_SERVICE_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
 
 export const AI_SERVICE_POLL_INTERVAL_MS = 2000;

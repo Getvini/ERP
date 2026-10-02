@@ -12,13 +12,45 @@ import {
 
 type Actor = { id: string; userId?: string; role: string; username?: string };
 
+export type QcBatchStatus = "pending" | "running" | "done" | "error";
+
+export type QcBatchInfo = {
+    key: string;
+    sheet: string;
+    index: number;
+    status: QcBatchStatus;
+    blockIds: string[];
+    scenarios: { id: string; label: string; rowRange: number[] }[];
+    mismatches: Record<string, any>[];
+    unverified: number;
+    cached: boolean;
+    error: string | null;
+    durationMs: number | null;
+};
+
+function toBatchInfo(sheetName: string, raw: any): QcBatchInfo {
+    return {
+        key: `${sheetName}#${raw.index}`,
+        sheet: sheetName,
+        index: raw.index,
+        status: raw.status,
+        blockIds: raw.block_ids || [],
+        scenarios: (raw.scenarios || []).map((s: any) => ({ id: s.id, label: s.label, rowRange: s.row_range })),
+        mismatches: (raw.mismatches || []).map((m: any) => ({ ...m, sheet_name: sheetName })),
+        unverified: raw.unverified || 0,
+        cached: Boolean(raw.cached),
+        error: raw.error || null,
+        durationMs: raw.duration_ms ?? null
+    };
+}
+
 function httpError(message: string, statusCode: number) {
     const error = new Error(message) as Error & { statusCode?: number };
     error.statusCode = statusCode;
     return error;
 }
 
-async function submitAndPollQcJob(formData: FormData) {
+async function submitAndPollQcJob(formData: FormData, onProgress?: (job: any) => void) {
     const aiServiceUrl = assertAiServiceUrl();
     const submitRes = await axios.post(`${aiServiceUrl}/qc/run`, formData, {
         timeout: REQUEST_TIMEOUT_MS,
@@ -27,10 +59,18 @@ async function submitAndPollQcJob(formData: FormData) {
     });
     const jobId = submitRes.data.job_id;
     const start = Date.now();
+    let lastSignature = "";
 
     while (true) {
         const statusRes = await axios.get(`${aiServiceUrl}/qc/run/${jobId}`, { timeout: 10000 });
         const job = statusRes.data;
+        if (onProgress) {
+            const signature = JSON.stringify(job.batches || []);
+            if (signature !== lastSignature) {
+                lastSignature = signature;
+                onProgress(job);
+            }
+        }
         if (job.status === "done") {
             return job;
         }
@@ -92,6 +132,7 @@ export class QcService {
         scenarioIds?: string[];
         regions?: ScanRegion[];
         actor?: Actor;
+        onBatches?: (batches: QcBatchInfo[]) => void;
     }) {
         const productInfo = await this.getApprovedProductInfo(params.projectId, params.actor);
         const aiProductInfo = toAiProductInfo(productInfo);
@@ -105,6 +146,9 @@ export class QcService {
 
         const fileBuffer = params.fileBuffer;
         const fileName = params.fileName;
+
+        const batchesBySheet = new Map<string, QcBatchInfo[]>();
+        const flattenBatches = () => sheetNames.flatMap((name) => batchesBySheet.get(name) || []);
 
         const sheetResults = await Promise.all(sheetNames.map(async (sheetName) => {
             const sheetScenarioIds = params.scenarioIds
@@ -132,7 +176,11 @@ export class QcService {
             }
             if (sheetRegions.length > 0) formData.append("regions", JSON.stringify(sheetRegions));
 
-            const data = await submitAndPollQcJob(formData);
+            const data = await submitAndPollQcJob(formData, (job) => {
+                batchesBySheet.set(sheetName, (job.batches || []).map((raw: any) => toBatchInfo(sheetName, raw)));
+                params.onBatches?.(flattenBatches());
+            });
+            batchesBySheet.set(sheetName, (data?.batches || []).map((raw: any) => toBatchInfo(sheetName, raw)));
             return { sheetName, data };
         }));
 
@@ -148,6 +196,7 @@ export class QcService {
         return {
             sheets: sheetNames,
             content_blocks: contentBlocks,
+            batches: flattenBatches(),
             mismatch_report: { mismatches },
             models: sheetResults[0]?.data?.models,
         };

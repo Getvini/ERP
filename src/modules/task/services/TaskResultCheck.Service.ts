@@ -5,7 +5,7 @@ import { AppDataSource } from "../../../data-source";
 import { TaskResultChecks, TaskResultCheckStatus } from "../entities/TaskResultCheck.entity";
 import { taskResultCheckEmitter, TASK_RESULT_CHECK_EVENTS } from "../events/TaskResultCheckEmitter";
 import { SpellingCheckService } from "../../spelling-check/services/SpellingCheck.Service";
-import { QcService } from "../../qc/services/Qc.Service";
+import { QcService, QcBatchInfo } from "../../qc/services/Qc.Service";
 import { ProjectSpellCheckWhitelistService } from "../../spelling-whitelist/services/ProjectSpellCheckWhitelist.Service";
 import { filterWorkbookSheets } from "../../../shared/helpers/xlsxFilter.helper";
 import { rawLocationToExcelRef } from "../../../shared/helpers/excelRef.helper";
@@ -63,6 +63,13 @@ function mergeScannedScenarios(current: ScannedScenario[] | null | undefined, in
     for (const item of current || []) map.set(item.id, item);
     for (const item of incoming || []) map.set(item.id, item);
     return Array.from(map.values());
+}
+
+function mergeQcBatches(current: QcBatchInfo[] | null | undefined, incoming: QcBatchInfo[], partial: boolean): QcBatchInfo[] {
+    if (!partial) return incoming;
+    const incomingKeys = new Set(incoming.flatMap(batch => batch.blockIds.map(id => `${batch.sheet}|${id}`)));
+    const kept = (current || []).filter(batch => !batch.blockIds.some(id => incomingKeys.has(`${batch.sheet}|${id}`)));
+    return [...kept, ...incoming];
 }
 
 function bareCellRef(ref: string) {
@@ -246,17 +253,37 @@ export class TaskResultCheckService extends TaskBaseService {
         actor: Actor | undefined,
         partial: boolean
     ) {
+        let persistChain: Promise<void> = Promise.resolve();
+        const onBatches = (batches: QcBatchInfo[]) => {
+            persistChain = persistChain
+                .then(() => this.persistQcBatches(recordId, taskId, batches, partial))
+                .catch(() => undefined);
+        };
         try {
-            const qc = await this.executeQcCheck(buffer, fileName, sheetNames, scope, projectId, actor);
+            if (!partial) await this.repository.update(recordId, { qcBatches: null });
+            const qc = await this.executeQcCheck(buffer, fileName, sheetNames, scope, projectId, actor, onBatches);
+            await persistChain;
             console.log(`[RESULT_CHECK_DEBUG] executeQcCheck OK recordId=${recordId} projectId=${projectId} requested_scenarioIds=${JSON.stringify(scope.scenarioIds)} regions=${scope.regions.length} qcMismatches=${qc.qcMismatches?.length ?? 0} skipped=${qc.qcSkippedReason ?? "no"}`);
             await this.applyQcResult(recordId, qc, partial ? scope : null);
         } catch (err: any) {
             console.log(`[RESULT_CHECK_DEBUG] executeQcCheck LOI recordId=${recordId} status=${err?.response?.status} detail=${JSON.stringify(err?.response?.data)} message=${err?.message}`);
+            await persistChain;
             await this.repository.update(recordId, {
                 qcStatus: TaskResultCheckStatus.ERROR,
                 qcErrorMessage: err?.message || "Lỗi khi kiểm tra QC"
             });
         }
+        taskResultCheckEmitter.emit(TASK_RESULT_CHECK_EVENTS.UPDATED, { taskId });
+    }
+
+    private async persistQcBatches(recordId: string, taskId: string, batches: QcBatchInfo[], partial: boolean) {
+        await AppDataSource.transaction(async (manager) => {
+            const repo = manager.getRepository(TaskResultChecks);
+            const record = await repo.findOne({ where: { id: recordId }, lock: { mode: "pessimistic_write" } });
+            if (!record) return;
+            record.qcBatches = mergeQcBatches(record.qcBatches, batches, partial);
+            await repo.save(record);
+        });
         taskResultCheckEmitter.emit(TASK_RESULT_CHECK_EVENTS.UPDATED, { taskId });
     }
 
@@ -368,11 +395,13 @@ export class TaskResultCheckService extends TaskBaseService {
         sheetNames: string[],
         scope: ScanScope,
         projectId?: string,
-        actor?: Actor
+        actor?: Actor,
+        onBatches?: (batches: QcBatchInfo[]) => void
     ) {
         let qcMismatches: Record<string, any>[] = [];
         let qcModels: { verify: string } | null = null;
         let qcSkippedReason: string | null = null;
+        let qcBatches: QcBatchInfo[] = [];
         if (!projectId) {
             qcSkippedReason = "Công việc chưa thuộc dự án nào nên không có thông tin chuẩn để đối chiếu QC";
         } else {
@@ -384,10 +413,12 @@ export class TaskResultCheckService extends TaskBaseService {
                     projectId,
                     scenarioIds: scope.scenarioIds,
                     regions: scope.regions,
-                    actor: actor as any
+                    actor: actor as any,
+                    onBatches
                 });
                 qcMismatches = qcResult?.mismatch_report?.mismatches || [];
                 qcModels = qcResult?.models || null;
+                qcBatches = qcResult?.batches || [];
             } catch (err: any) {
                 if (err?.statusCode === 400) {
                     qcSkippedReason = err?.message || "Không thể chạy QC với dữ liệu hiện tại";
@@ -400,11 +431,12 @@ export class TaskResultCheckService extends TaskBaseService {
         const seen = new Map<string, number>();
         const reviewedQcMismatches = qcMismatches.map((m: any) => ({
             ...m,
+            blockId: m.id ?? null,
             id: stableItemId("qc", [m.sheet_name, m.id, m.product_ref, m.attribute, m.claimed_value], seen),
             confirmed: m.status !== "unresolved"
         }));
 
-        return { qcMismatches, reviewedQcMismatches, qcModels, qcSkippedReason };
+        return { qcMismatches, reviewedQcMismatches, qcModels, qcSkippedReason, qcBatches };
     }
 
     private async applyQcResult(
@@ -428,6 +460,9 @@ export class TaskResultCheckService extends TaskBaseService {
                 ...qc.reviewedQcMismatches.map(item => ({ ...item, confirmed: previousById.get(item.id)?.confirmed ?? item.confirmed }))
             ];
             record.qcModels = qc.qcModels ?? record.qcModels;
+            if (qc.qcBatches.length > 0 || !partialScope) {
+                record.qcBatches = mergeQcBatches(record.qcBatches, qc.qcBatches, Boolean(partialScope));
+            }
             record.qcSkippedReason = qc.qcSkippedReason;
             record.qcStatus = TaskResultCheckStatus.DONE;
             record.qcErrorMessage = null;
@@ -479,6 +514,7 @@ export class TaskResultCheckService extends TaskBaseService {
         return {
             ...base,
             qcModels: record.qcModels,
+            qcBatches: (record.qcBatches || []).map(batch => ({ ...batch, mismatches: [] })),
             qcSkippedReason: record.qcSkippedReason,
             sheetNames: record.sheetNames,
             scenarioIds: record.scenarioIds,

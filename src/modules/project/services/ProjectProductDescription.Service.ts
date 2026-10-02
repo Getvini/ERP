@@ -150,7 +150,7 @@ export class ProjectProductDescriptionService {
             .join("");
     }
 
-    private async extractRawFileText(fileUrl: string): Promise<{ text: string | null; hasComplexLayout: boolean }> {
+    private async extractRawFileText(fileUrl: string): Promise<{ text: string | null; hasComplexLayout: boolean; warnings: string[]; method: string | null; visionPages: number[] }> {
         const aiServiceUrl = assertAiServiceUrl();
         const formData = new URLSearchParams();
         formData.append("url", fileUrl);
@@ -162,7 +162,10 @@ export class ProjectProductDescriptionService {
             });
             return {
                 text: response.data?.text ?? null,
-                hasComplexLayout: Boolean(response.data?.has_complex_layout)
+                hasComplexLayout: Boolean(response.data?.has_complex_layout),
+                warnings: Array.isArray(response.data?.warnings) ? response.data.warnings : [],
+                method: response.data?.method ?? null,
+                visionPages: Array.isArray(response.data?.vision_pages) ? response.data.vision_pages : []
             };
         } catch (error: any) {
             const message = error?.response?.data?.detail || error?.message || "Không thể trích xuất nội dung file";
@@ -170,11 +173,14 @@ export class ProjectProductDescriptionService {
         }
     }
 
-    private async extractFileText(fileUrl: string): Promise<{ extractedText: string | null; hasComplexLayout: boolean }> {
-        const { text, hasComplexLayout } = await this.extractRawFileText(fileUrl);
+    private async extractFileText(fileUrl: string) {
+        const { text, hasComplexLayout, warnings, method, visionPages } = await this.extractRawFileText(fileUrl);
         return {
             extractedText: text ? this.textToHtml(text) : null,
-            hasComplexLayout
+            hasComplexLayout,
+            warnings,
+            method,
+            visionPages
         };
     }
 
@@ -200,7 +206,10 @@ export class ProjectProductDescriptionService {
             const text: string | null = response.data?.text ?? null;
             return {
                 extractedText: text ? this.textToHtml(text) : null,
-                hasComplexLayout: Boolean(response.data?.has_complex_layout)
+                hasComplexLayout: Boolean(response.data?.has_complex_layout),
+                warnings: Array.isArray(response.data?.warnings) ? response.data.warnings : [],
+                method: response.data?.method ?? null,
+                visionPages: Array.isArray(response.data?.vision_pages) ? response.data.vision_pages : []
             };
         } catch (error: any) {
             const message = error?.response?.data?.detail || error?.message || "Không thể trích xuất nội dung file";
@@ -217,8 +226,7 @@ export class ProjectProductDescriptionService {
             throw this.httpError("Vui lòng cung cấp fileUrl", 400);
         }
 
-        const { extractedText, hasComplexLayout } = await this.extractFileText(url);
-        return { extractedText, hasComplexLayout };
+        return this.extractFileText(url);
     }
 
     async aiFormat(projectId: string, text: string, productName?: string, actor?: Actor) {
@@ -241,7 +249,11 @@ export class ProjectProductDescriptionService {
                     maxContentLength: AI_SERVICE_MAX_FETCH_BYTES
                 }
             );
-            return { extractedText: response.data?.html ?? "" };
+            return {
+                extractedText: response.data?.html ?? "",
+                // Các dòng AI đã loại bỏ, để FE cho người dùng đối chiếu trước khi áp dụng
+                removed: Array.isArray(response.data?.removed) ? response.data.removed : []
+            };
         } catch (error: any) {
             const message = error?.response?.data?.detail || error?.message || "Không thể format nội dung";
             throw this.httpError(message, 400);
