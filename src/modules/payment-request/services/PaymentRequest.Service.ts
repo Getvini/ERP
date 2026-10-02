@@ -5,6 +5,8 @@ import {
     PaymentRequestType,
     PaymentRequestApprovalStatus,
     PaymentDueStatus,
+    PaymentMethod,
+    CashVoucherInfo,
     PaymentRequestFile,
     PaymentRequestHistoryEntry
 } from "../entities/PaymentRequest.entity";
@@ -189,6 +191,21 @@ export class PaymentRequestService {
                 throw new Error("Công việc này không được giao cho bạn");
             }
             request.costPrice = task.cost;
+        } else if (dto.type === PaymentRequestType.OTHER_WORK) {
+            if (!dto.taskId) {
+                throw new Error("Vui lòng chọn công việc không thuộc dự án");
+            }
+            const task = await this.taskRepo.findOne({ where: { id: dto.taskId }, relations: ["project", "assignee"] });
+            if (!task) {
+                throw new Error("Không tìm thấy công việc");
+            }
+            if (task.project) {
+                throw new Error("Công việc đã chọn thuộc dự án, không phải công việc khác");
+            }
+            if (!task.assigneeId || task.assigneeId !== requesterId) {
+                throw new Error("Công việc này không được giao cho bạn");
+            }
+            request.costPrice = task.cost;
         }
 
         this.pushHistory(request, {
@@ -341,6 +358,14 @@ export class PaymentRequestService {
     async update(id: string, dto: any) {
         const request = await this.getOne(id);
 
+        if (dto.cashVoucherInfo !== undefined || dto.paymentMethod !== undefined) {
+            if (dto.cashVoucherInfo !== undefined) request.cashVoucherInfo = dto.cashVoucherInfo;
+            if (dto.paymentMethod !== undefined) request.paymentMethod = dto.paymentMethod;
+            if (Object.keys(dto).every((k) => ["cashVoucherInfo", "paymentMethod"].includes(k))) {
+                return await this.repo.save(request);
+            }
+        }
+
         if (request.approvalStatus === PaymentRequestApprovalStatus.NEED_MORE_DOCS) {
             throw new Error("Yêu cầu này đang cần bổ sung, vui lòng dùng chức năng bổ sung để giữ lại lịch sử");
         }
@@ -386,6 +411,18 @@ export class PaymentRequestService {
                     throw new Error("Công việc không còn được giao cho vendor này");
                 }
             } else if (!task.assigneeId || task.assigneeId !== request.requesterId) {
+                throw new Error("Công việc này không được giao cho bạn");
+            }
+            request.costPrice = task.cost;
+        } else if (request.type === PaymentRequestType.OTHER_WORK && request.taskId) {
+            const task = await this.taskRepo.findOne({ where: { id: request.taskId }, relations: ["project"] });
+            if (!task) {
+                throw new Error("Không tìm thấy công việc");
+            }
+            if (task.project) {
+                throw new Error("Công việc đã chọn thuộc dự án, không phải công việc khác");
+            }
+            if (!task.assigneeId || task.assigneeId !== request.requesterId) {
                 throw new Error("Công việc này không được giao cho bạn");
             }
             request.costPrice = task.cost;
@@ -577,7 +614,7 @@ export class PaymentRequestService {
         return saved;
     }
 
-    async bodDecision(id: string, action: "APPROVE" | "REJECT", reason: string, bodUserId: string, confirmedDueDate?: string) {
+    async bodDecision(id: string, action: "APPROVE" | "REJECT" | "REQUEST_MORE_DOCS", reason: string, bodUserId: string, confirmedDueDate?: string) {
         const request = await this.getOne(id);
 
         if (request.approvalStatus !== PaymentRequestApprovalStatus.PENDING_BOD) {
@@ -602,10 +639,15 @@ export class PaymentRequestService {
                 }
             }
         } else if (action === "REJECT") {
-            if (!reason) {
+            if (!reason || !reason.trim()) {
                 throw new Error("Vui lòng nhập lý do từ chối");
             }
             request.approvalStatus = PaymentRequestApprovalStatus.REJECTED;
+        } else if (action === "REQUEST_MORE_DOCS") {
+            if (!reason || !reason.trim()) {
+                throw new Error("Vui lòng nhập lý do yêu cầu bổ sung");
+            }
+            request.approvalStatus = PaymentRequestApprovalStatus.NEED_MORE_DOCS;
         } else {
             throw new Error("Hành động không hợp lệ");
         }
@@ -629,11 +671,19 @@ export class PaymentRequestService {
                 relatedEntityId: saved.id,
                 link: `/payment-requests/${saved.id}`
             });
-        } else {
+        } else if (action === "REJECT") {
             await this.notifyUser(saved.requesterId, {
                 title: "Yêu cầu thanh toán bị BOD từ chối",
                 content: `Yêu cầu thanh toán "${saved.content}" đã bị BOD từ chối${reason ? `: ${reason}` : "."}`,
                 type: "PAYMENT_REQUEST_REJECTED",
+                relatedEntityId: saved.id,
+                link: `/payment-requests/${saved.id}`
+            });
+        } else if (action === "REQUEST_MORE_DOCS") {
+            await this.notifyUser(saved.requesterId, {
+                title: "Yêu cầu thanh toán cần bổ sung",
+                content: `Yêu cầu thanh toán "${saved.content}" bị BOD yêu cầu bổ sung hồ sơ${reason ? `: ${reason}` : "."}`,
+                type: "PAYMENT_REQUEST_NEED_MORE_DOCS",
                 relatedEntityId: saved.id,
                 link: `/payment-requests/${saved.id}`
             });
@@ -642,7 +692,11 @@ export class PaymentRequestService {
         return saved;
     }
 
-    async pay(id: string, dto: { paymentProofs?: PaymentRequestFile[] }, payerId?: string) {
+    async pay(id: string, dto: {
+        paymentMethod?: PaymentMethod;
+        paymentProofs?: PaymentRequestFile[];
+        cashVoucherInfo?: CashVoucherInfo;
+    }, payerId?: string) {
         const request = await this.getOne(id);
 
         if (request.approvalStatus !== PaymentRequestApprovalStatus.APPROVED) {
@@ -653,11 +707,22 @@ export class PaymentRequestService {
             throw new Error("Vui lòng tải lên ảnh/PDF minh chứng đã chi tiền");
         }
 
+        if (dto.paymentMethod) {
+            request.paymentMethod = dto.paymentMethod;
+        }
+        if (dto.cashVoucherInfo) {
+            request.cashVoucherInfo = dto.cashVoucherInfo;
+        }
+
         request.paymentProofs = dto.paymentProofs.map((file) => ({ ...file, uploadedAt: file.uploadedAt || new Date().toISOString() }));
         request.paidAt = new Date();
         request.paymentStatus = PaymentDueStatus.PAID;
 
-        this.pushHistory(request, { action: "PAID", byId: payerId || "system" });
+        const historyNote = dto.paymentMethod === PaymentMethod.CASH
+            ? `Chi tiền mặt (Phiếu chi: ${dto.cashVoucherInfo?.voucherNo || "N/A"})`
+            : "Chi bằng chuyển khoản";
+
+        this.pushHistory(request, { action: "PAID", byId: payerId || "system", note: historyNote });
         const saved = await this.repo.save(request);
 
         await this.notifyUser(saved.requesterId, {

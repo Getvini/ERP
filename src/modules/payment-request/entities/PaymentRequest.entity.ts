@@ -30,6 +30,27 @@ export enum PaymentDueStatus {
     NOT_APPLICABLE = "NOT_APPLICABLE"
 }
 
+export enum PaymentMethod {
+    BANK_TRANSFER = "BANK_TRANSFER",
+    CASH = "CASH"
+}
+
+export interface CashVoucherInfo {
+    voucherNo?: string;
+    bookNo?: string;
+    receiverName?: string;
+    receiverAddress?: string;
+    reason?: string;
+    amount?: number;
+    amountInWords?: string;
+    debitAccount?: string;
+    creditAccount?: string;
+    attachmentCount?: number;
+    createdDate?: string;
+    companyName?: string;
+    companyAddress?: string;
+}
+
 export interface PaymentRequestFile {
     name: string;
     url: string;
@@ -182,6 +203,16 @@ export class PaymentRequests extends BaseEntity {
 
     @Column({ type: "timestamptz", nullable: true })
     paidAt: Date | null;
+
+    @Column({
+        type: "enum",
+        enum: PaymentMethod,
+        nullable: true
+    })
+    paymentMethod: PaymentMethod | null;
+
+    @Column({ type: "jsonb", nullable: true })
+    cashVoucherInfo: CashVoucherInfo | null;
 
     @Column({ type: "jsonb", default: [] })
     paymentProofs: PaymentRequestFile[];
