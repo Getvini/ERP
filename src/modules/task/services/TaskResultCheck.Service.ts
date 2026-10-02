@@ -1,6 +1,4 @@
 import axios from "axios";
-import path from "path";
-import PDFDocument from "pdfkit";
 import { AppDataSource } from "../../../data-source";
 import { TaskResultChecks, TaskResultCheckStatus } from "../entities/TaskResultCheck.entity";
 import { taskResultCheckEmitter, TASK_RESULT_CHECK_EVENTS } from "../events/TaskResultCheckEmitter";
@@ -11,8 +9,8 @@ import { filterWorkbookSheets } from "../../../shared/helpers/xlsxFilter.helper"
 import { rawLocationToExcelRef } from "../../../shared/helpers/excelRef.helper";
 import { buildCheckSummary } from "../../../shared/helpers/CheckSummary.helper";
 import { buildHighlightedWorkbook } from "../../../shared/helpers/xlsxHighlight.helper";
-import { drawTable } from "../../../shared/helpers/pdfTable.helper";
-import { renderRichTextToPdf } from "../../../shared/helpers/richTextPdf.helper";
+import { renderCheckReportPdf } from "../../../shared/helpers/checkReportPdf.helper";
+import { buildCheckReportData } from "../../../shared/helpers/checkReportData.helper";
 import { uploadBufferToCloudinary } from "../../../shared/helpers/cloudinary.helper";
 import { isProjectManagementRole } from "../../account/entities/Account.entity";
 import { TaskBaseService } from "./Task.BaseService";
@@ -35,8 +33,6 @@ import {
 const MAX_FETCH_BYTES = 500 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
 const SHEET_EXTENSIONS = ["xlsx", "xlsm"];
-const FONT_REGULAR = path.join(__dirname, "../../../../assets/fonts/DejaVuSans.ttf");
-const FONT_BOLD = path.join(__dirname, "../../../../assets/fonts/DejaVuSans-Bold.ttf");
 
 type Actor = { id?: string; userId?: string; role?: string };
 
@@ -736,184 +732,55 @@ export class TaskResultCheckService extends TaskBaseService {
         return saved;
     }
 
-    async buildPdf(taskId: string, actor?: Actor): Promise<Buffer> {
+    private async loadReportData(taskId: string, actor?: Actor) {
         const task = await this.getOne(taskId);
         this.assertCanAccess(task, actor);
 
         const record = await this.repository.findOne({ where: { taskId } });
         if (!record) throw this.httpError("Không tìm thấy kết quả kiểm tra", 404);
 
-        const spellItems = (record.reviewedSpellErrors || []).filter(i => i.confirmed);
-        const qcItems = (record.reviewedQcMismatches || []).filter(i => i.confirmed);
+        return { task, record };
+    }
 
-        const spellGroups = groupSpellErrors(spellItems);
-        const qcGroups = groupQcMismatches(qcItems);
+    async buildPdf(taskId: string, actor?: Actor): Promise<Buffer> {
+        const { task, record } = await this.loadReportData(taskId, actor);
 
-        let productInfoItems: { productName: string; extractedText: string | null; note: string | null }[] = [];
+        let products: { productName: string; extractedText: string | null; note: string | null }[] = [];
         if (task.project?.id) {
             try {
-                productInfoItems = await this.qcService.getApprovedProductInfo(task.project.id, actor as any);
+                products = await this.qcService.getApprovedProductInfo(task.project.id, actor as any);
             } catch {
-                productInfoItems = [];
+                products = [];
             }
         }
 
-        return await new Promise((resolve, reject) => {
-            const doc = new PDFDocument({ margin: 40, bufferPages: true, size: "A4" });
-            doc.registerFont("Base", FONT_REGULAR);
-            doc.registerFont("Base-Bold", FONT_BOLD);
-            doc.font("Base");
-
-            const chunks: Buffer[] = [];
-            doc.on("data", (c: Buffer) => chunks.push(c));
-            doc.on("end", () => resolve(Buffer.concat(chunks)));
-            doc.on("error", reject);
-
-            const contentWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
-            const x = doc.page.margins.left;
-
-            doc.font("Base-Bold").fontSize(18).fillColor("#1e293b").text("Báo cáo kiểm tra kết quả công việc", { align: "center" });
-            doc.font("Base").fontSize(9).fillColor("#94a3b8").text(`Xuất lúc ${new Date().toLocaleString("vi-VN")}`, { align: "center" });
-            doc.moveDown(1.2);
-
-            doc.rect(x, doc.y, 6, 16).fill("#16a34a");
-            doc.font("Base-Bold").fontSize(13).fillColor("#1e293b").text(`  Thông tin chuẩn sản phẩm (${productInfoItems.length} sản phẩm)`, x + 10, doc.y - 14);
-            doc.moveDown(0.8);
-
-            if (productInfoItems.length === 0) {
-                doc.font("Base").fontSize(10).fillColor("#64748b").text("Không có thông tin chuẩn sản phẩm");
-                doc.moveDown();
-            } else {
-                for (const item of productInfoItems) {
-                    doc.font("Base-Bold").fontSize(10.5).fillColor("#1e293b").text(item.productName || "(Không có tên sản phẩm)", x, doc.y, { width: contentWidth });
-                    doc.moveDown(0.3);
-                    renderRichTextToPdf(doc, item.extractedText || "", x, contentWidth, 9.5);
-                    if (item.note) {
-                        doc.moveDown(0.2);
-                        doc.font("Base").fontSize(9).fillColor("#94a3b8").text(`Ghi chú: ${item.note}`, x, doc.y, { width: contentWidth });
-                    }
-                    doc.moveDown(0.8);
-                }
-            }
-
-            doc.rect(x, doc.y, 6, 16).fill("#2563eb");
-            doc.font("Base-Bold").fontSize(13).fillColor("#1e293b").text(`  Lỗi chính tả đã xác nhận (${spellItems.length} lỗi, ${spellGroups.length} loại)`, x + 10, doc.y - 14);
-            doc.moveDown(0.8);
-
-            if (spellGroups.length === 0) {
-                doc.font("Base").fontSize(10).fillColor("#64748b").text("Không có lỗi được xác nhận");
-                doc.moveDown();
-            } else {
-                const spellColumns = [
-                    { header: "Sheet / Kịch bản", width: contentWidth * 0.28 },
-                    { header: "Từ lỗi", width: contentWidth * 0.20 },
-                    { header: "Số lần", width: contentWidth * 0.10 },
-                    { header: "Vị trí", width: contentWidth * 0.42 }
-                ];
-                const spellRows = spellGroups.map(g => [
-                    g.sheetName ? `${g.sheetName}${g.scenarioLabel ? ` / ${g.scenarioLabel}` : ""}` : "-",
-                    g.token,
-                    String(g.count),
-                    g.locations.join(", ")
-                ]);
-                const endY = drawTable(doc, { x, y: doc.y, columns: spellColumns, rows: spellRows, headerColor: "#2563eb" });
-                doc.y = endY + 18;
-            }
-
-            doc.rect(x, doc.y, 6, 16).fill("#ea580c");
-            doc.font("Base-Bold").fontSize(13).fillColor("#1e293b").text(`  Điểm QC chưa khớp đã xác nhận (${qcItems.length} lỗi, ${qcGroups.length} thuộc tính)`, x + 10, doc.y - 14);
-            doc.moveDown(0.8);
-
-            if (record.qcSkippedReason) {
-                doc.font("Base").fontSize(10).fillColor("#b45309").text(`QC chưa được quét: ${record.qcSkippedReason}`);
-                doc.moveDown(0.5);
-            }
-
-            if (qcGroups.length === 0) {
-                doc.font("Base").fontSize(10).fillColor("#64748b").text("Không có điểm chưa khớp được xác nhận");
-            } else {
-                const qcColumns = [
-                    { header: "Thuộc tính", width: contentWidth * 0.18 },
-                    { header: "Sản phẩm", width: contentWidth * 0.27 },
-                    { header: "Ghi -> Chuẩn", width: contentWidth * 0.25 },
-                    { header: "Ghi chú", width: contentWidth * 0.3 }
-                ];
-                const qcRows = qcGroups.flatMap(group =>
-                    group.items.map(item => [
-                        group.attribute,
-                        `${item.sheetPrefix}${item.productRef}`,
-                        `${item.claimedValue} -> ${item.expectedValue}`,
-                        item.reasoning || ""
-                    ])
-                );
-                doc.y = drawTable(doc, { x, y: doc.y, columns: qcColumns, rows: qcRows, headerColor: "#ea580c" });
-            }
-
-            const range = doc.bufferedPageRange();
-            for (let i = range.start; i < range.start + range.count; i++) {
-                doc.switchToPage(i);
-                doc.font("Base").fontSize(8).fillColor("#94a3b8").text(
-                    `Trang ${i + 1 - range.start}/${range.count}`,
-                    0,
-                    doc.page.height - 30,
-                    { align: "center" }
-                );
-            }
-
-            doc.end();
+        const report = buildCheckReportData({
+            taskName: task.nickname || task.name,
+            projectName: (task.project as any)?.name ?? null,
+            record,
+            products
         });
+        return await renderCheckReportPdf(report);
     }
 
     async buildXlsx(taskId: string, actor?: Actor): Promise<Buffer> {
-        const task = await this.getOne(taskId);
-        this.assertCanAccess(task, actor);
-
-        const record = await this.repository.findOne({ where: { taskId } });
-        if (!record) throw this.httpError("Không tìm thấy kết quả kiểm tra", 404);
+        const { task, record } = await this.loadReportData(taskId, actor);
         if (!record.filteredFileUrl) throw this.httpError("Không có file để xuất", 400);
 
         const buffer = await fetchRemoteFile(record.filteredFileUrl);
         const spellItems = (record.reviewedSpellErrors || []).filter(i => i.confirmed);
         const qcItems = (record.reviewedQcMismatches || []).filter(i => i.confirmed);
 
-        return await buildHighlightedWorkbook(buffer, record.sheetNames || [], spellItems, qcItems);
-    }
-}
+        const report = buildCheckReportData({
+            taskName: task.nickname || task.name,
+            projectName: (task.project as any)?.name ?? null,
+            record,
+            products: []
+        });
 
-function groupSpellErrors(items: { token: string; location: string; sheetName?: string | null; scenarioLabel?: string | null; scenarioId?: string | null }[]) {
-    const map = new Map<string, { token: string; sheetName: string | null; scenarioLabel: string | null; locations: string[] }>();
-    for (const item of items) {
-        const sheetName = item.sheetName || null;
-        const scenarioLabel = item.scenarioLabel || null;
-        const key = `${sheetName || ""}|${item.scenarioId || scenarioLabel || ""}|${item.token}`;
-        if (!map.has(key)) map.set(key, { token: item.token, sheetName, scenarioLabel, locations: [] });
-        map.get(key)!.locations.push(item.location);
-    }
-    return Array.from(map.values()).map(g => ({
-        token: g.token,
-        sheetName: g.sheetName,
-        scenarioLabel: g.scenarioLabel,
-        count: g.locations.length,
-        locations: g.locations
-    }));
-}
-
-function groupQcMismatches(items: Record<string, any>[]) {
-    const map = new Map<string, { sheetPrefix: string; productRef: string; claimedValue: string; expectedValue: string; reasoning: string }[]>();
-    for (const item of items) {
-        const key = item.attribute || "Không xác định";
-        if (!map.has(key)) map.set(key, []);
-        map.get(key)!.push({
-            sheetPrefix: item.sheet_name ? `${item.sheet_name}${item.scenario ? ` / ${item.scenario}` : ""} · ` : "",
-            productRef: item.product_ref || "Không rõ sản phẩm",
-            claimedValue: item.claimed_value,
-            expectedValue: item.expected_value ?? "không tìm thấy",
-            reasoning: item.reasoning || ""
+        return await buildHighlightedWorkbook(buffer, record.sheetNames || [], spellItems, qcItems, {
+            report,
+            scenarios: record.scannedScenarios || []
         });
     }
-    return Array.from(map.entries()).map(([attribute, entries]) => ({
-        attribute,
-        count: entries.length,
-        items: entries
-    }));
 }

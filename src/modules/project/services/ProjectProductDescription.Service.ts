@@ -252,7 +252,11 @@ export class ProjectProductDescriptionService {
             return {
                 extractedText: response.data?.html ?? "",
                 // Các dòng AI đã loại bỏ, để FE cho người dùng đối chiếu trước khi áp dụng
-                removed: Array.isArray(response.data?.removed) ? response.data.removed : []
+                removed: Array.isArray(response.data?.removed) ? response.data.removed : [],
+                // File dài được AI xử lý theo nhiều phần; phần nào AI không xử lý được vẫn giữ đủ dòng và được nêu ở đây
+                warnings: Array.isArray(response.data?.warnings) ? response.data.warnings : [],
+                chunks: Number(response.data?.chunks) || 1,
+                fallbackLines: Number(response.data?.fallback_lines) || 0
             };
         } catch (error: any) {
             const message = error?.response?.data?.detail || error?.message || "Không thể format nội dung";
