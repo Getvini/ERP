@@ -27,6 +27,11 @@ export interface PaymentRequestQuery {
     approvalStatus?: PaymentRequestApprovalStatus;
     paymentStatus?: PaymentDueStatus;
     projectId?: string;
+    fromDate?: string;
+    toDate?: string;
+    dateField?: "dueDate" | "createdAt";
+    minAmount?: number | string;
+    maxAmount?: number | string;
     sortBy?: "createdAt" | "amount" | "dueDate";
     sortOrder?: "ASC" | "DESC";
 }
@@ -319,6 +324,21 @@ export class PaymentRequestService {
         }
         if (query.projectId) {
             qb.andWhere("pr.projectId = :projectId", { projectId: query.projectId });
+        }
+
+        const dateCol = query.dateField === "createdAt" ? "pr.createdAt" : "COALESCE(pr.confirmedDueDate, pr.dueDate)";
+        if (query.fromDate) {
+            qb.andWhere(`${dateCol} >= :fromDate`, { fromDate: new Date(`${query.fromDate}T00:00:00.000`) });
+        }
+        if (query.toDate) {
+            qb.andWhere(`${dateCol} <= :toDate`, { toDate: new Date(`${query.toDate}T23:59:59.999`) });
+        }
+
+        if (query.minAmount !== undefined && query.minAmount !== "" && !isNaN(Number(query.minAmount))) {
+            qb.andWhere("pr.amount >= :minAmount", { minAmount: Number(query.minAmount) });
+        }
+        if (query.maxAmount !== undefined && query.maxAmount !== "" && !isNaN(Number(query.maxAmount))) {
+            qb.andWhere("pr.amount <= :maxAmount", { maxAmount: Number(query.maxAmount) });
         }
 
         // Phân quyền hiển thị: chỉ Admin Sale/BOD/Admin thấy toàn bộ, còn lại chỉ thấy yêu cầu do
@@ -871,19 +891,50 @@ export class PaymentRequestService {
         };
     }
 
-    async getTotalDebt(query: Pick<PaymentRequestQuery, "projectId" | "type">) {
+    async getTotalDebt(query: PaymentRequestQuery, viewer?: PaymentRequestViewer) {
         const qb = this.repo.createQueryBuilder("pr")
             .where("pr.approvalStatus = :approved", { approved: PaymentRequestApprovalStatus.APPROVED })
             .andWhere("pr.paidAt IS NULL");
 
-        if (query.projectId) {
-            qb.andWhere("pr.projectId = :projectId", { projectId: query.projectId });
+        if (query.search) {
+            qb.andWhere("pr.content ILIKE :search", { search: `%${query.search}%` });
         }
         if (isValidRequestType(query.type)) {
             qb.andWhere("pr.type = :type", { type: query.type });
         }
+        if (query.projectId) {
+            qb.andWhere("pr.projectId = :projectId", { projectId: query.projectId });
+        }
 
-        const { total } = await qb.select("COALESCE(SUM(pr.amount), 0)", "total").getRawOne();
-        return { totalDebt: Number(total) };
+        const dateCol = query.dateField === "createdAt" ? "pr.createdAt" : "COALESCE(pr.confirmedDueDate, pr.dueDate)";
+        if (query.fromDate) {
+            qb.andWhere(`${dateCol} >= :fromDate`, { fromDate: new Date(`${query.fromDate}T00:00:00.000`) });
+        }
+        if (query.toDate) {
+            qb.andWhere(`${dateCol} <= :toDate`, { toDate: new Date(`${query.toDate}T23:59:59.999`) });
+        }
+
+        if (query.minAmount !== undefined && query.minAmount !== "" && !isNaN(Number(query.minAmount))) {
+            qb.andWhere("pr.amount >= :minAmount", { minAmount: Number(query.minAmount) });
+        }
+        if (query.maxAmount !== undefined && query.maxAmount !== "" && !isNaN(Number(query.maxAmount))) {
+            qb.andWhere("pr.amount <= :maxAmount", { maxAmount: Number(query.maxAmount) });
+        }
+
+        if (viewer && !FULL_VISIBILITY_ROLES.includes(viewer.role as UserRole)) {
+            qb.andWhere("pr.requesterId = :viewerId", { viewerId: viewer.userId });
+        }
+
+        const raw = await qb.select([
+            "COALESCE(SUM(pr.amount), 0) AS total",
+            "COALESCE(SUM(CASE WHEN pr.type = 'PROJECT' THEN pr.amount ELSE 0 END), 0) AS project_debt",
+            "COALESCE(SUM(CASE WHEN pr.type = 'OTHER_WORK' THEN pr.amount ELSE 0 END), 0) AS other_work_debt"
+        ]).getRawOne();
+
+        return {
+            totalDebt: Number(raw?.total || 0),
+            projectDebt: Number(raw?.project_debt || 0),
+            otherWorkDebt: Number(raw?.other_work_debt || 0)
+        };
     }
 }
