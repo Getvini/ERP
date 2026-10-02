@@ -10,6 +10,7 @@ export type ScanRegion = {
     startCol: number;
     endCol: number;
     qc?: boolean;
+    extends?: string;
 };
 
 export type ScanScope = {
@@ -67,7 +68,10 @@ export function normalizeRegions(raw: unknown, allowedSheets: string[]): ScanReg
             throw new ScanScopeError("Toạ độ vùng quét nằm ngoài giới hạn của bảng tính");
         }
         const label = String(item?.label ?? "").trim().slice(0, MAX_LABEL_LENGTH);
-        return { id, sheet, label, startRow, endRow, startCol, endCol, qc: item?.qc !== false };
+        const extendsId = typeof item?.extends === "string" ? item.extends.trim().slice(0, 200) : "";
+        const normalized: ScanRegion = { id, sheet, label, startRow, endRow, startCol, endCol, qc: item?.qc !== false };
+        if (extendsId && extendsId.startsWith(`${sheet}::`)) normalized.extends = extendsId;
+        return normalized;
     });
 }
 
@@ -126,8 +130,13 @@ function cellOf(item: SpellItem, fallbackSheet: string | null) {
     return { sheet: item.sheetName || parsed.sheet || fallbackSheet, row: parsed.row, col: parsed.col };
 }
 
+function extendedScenarioIds(scope: ScanScope) {
+    return new Set(scope.regions.map(region => region.extends).filter((id): id is string => Boolean(id)));
+}
+
 export function spellItemInScope(item: SpellItem, scope: ScanScope, fallbackSheet: string | null): boolean {
     if (item.scenarioId && (scope.scenarioIds || []).includes(item.scenarioId)) return true;
+    if (item.scenarioId && extendedScenarioIds(scope).has(item.scenarioId)) return true;
     const cell = cellOf(item, fallbackSheet);
     if (!cell) return false;
     return scope.regions.some(region =>
@@ -138,7 +147,9 @@ export function spellItemInScope(item: SpellItem, scope: ScanScope, fallbackShee
 }
 
 export function qcItemInScope(item: QcItem, scope: ScanScope): boolean {
-    if (item.id && (scope.scenarioIds || []).includes(item.id)) return true;
+    const blockId = item.blockId ?? item.id;
+    if (blockId && (scope.scenarioIds || []).includes(blockId)) return true;
+    if (blockId && extendedScenarioIds(scope).has(blockId)) return true;
     const range: number[] = Array.isArray(item.row_range) ? item.row_range : [item.row_range, item.row_range];
     const start = Number(range[0]);
     const end = Number(range[1] ?? range[0]);
