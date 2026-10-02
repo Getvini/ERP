@@ -2,6 +2,7 @@ import { Entity, Column, OneToOne, JoinColumn } from "typeorm";
 import { BaseEntity } from "../../../shared/entities/BaseEntity";
 import { Tasks } from "./Task.entity";
 import type { ScanRegion } from "../helpers/ScanScope.helper";
+import type { QcBatchInfo } from "../../qc/services/Qc.Service";
 
 export enum TaskResultCheckStatus {
     PENDING = "PENDING",
@@ -76,6 +77,9 @@ export class TaskResultChecks extends BaseEntity {
 
     @Column({ type: "simple-json", nullable: true })
     qcModels: { verify: string } | null;
+
+    @Column({ type: "simple-json", nullable: true })
+    qcBatches: QcBatchInfo[] | null;
 
     @Column({ type: "simple-json", nullable: true })
     reviewedSpellErrors: { id: string; location: string; token: string; sheetName?: string | null; scenarioLabel?: string | null; scenarioId?: string | null; confirmed: boolean }[];
