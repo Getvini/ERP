@@ -19,11 +19,7 @@ export enum UserRole {
     DESIGNER_A = "DESIGNER_A",
     DESIGNER_B = "DESIGNER_B",
     DESIGNER_C = "DESIGNER_C",
-    DESIGNER_D = "DESIGNER_D",
-    STAFF_A = "STAFF_A",
-    STAFF_B = "STAFF_B",
-    STAFF_C = "STAFF_C",
-    STAFF_D = "STAFF_D",
+    DESIGNER_D = "DESIGNER_D"
 }
 
 export const STAFF_ROLES = [
@@ -38,11 +34,7 @@ export const STAFF_ROLES = [
     UserRole.DESIGNER_A,
     UserRole.DESIGNER_B,
     UserRole.DESIGNER_C,
-    UserRole.DESIGNER_D,
-    UserRole.STAFF_A,
-    UserRole.STAFF_B,
-    UserRole.STAFF_C,
-    UserRole.STAFF_D,
+    UserRole.DESIGNER_D
 ];
 
 export const MANAGEMENT_ROLES = [
