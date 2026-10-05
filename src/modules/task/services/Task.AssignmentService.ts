@@ -340,11 +340,12 @@ export class TaskAssignmentService extends TaskBaseService {
         if (!plannedEndDate || Number.isNaN(plannedEndDate.getTime())) {
             throw this.httpError("Vui lòng nhập deadline", 400);
         }
-        const now = new Date();
-        now.setSeconds(0, 0);
-        if (plannedEndDate.getTime() < now.getTime() - 60 * 1000) {
-            throw this.httpError("Deadline không được ở trong quá khứ", 400);
-        }
+        // Tạm thời cho phép phân công deadline trong quá khứ để nhập bù dữ liệu giai đoạn đầu.
+        // const now = new Date();
+        // now.setSeconds(0, 0);
+        // if (plannedEndDate.getTime() < now.getTime() - 60 * 1000) {
+        //     throw this.httpError("Deadline không được ở trong quá khứ", 400);
+        // }
         const uniqueTaskIds = [...new Set(taskIds)].sort();
 
         // Chặn trước khi mở transaction: nếu BẤT KỲ task nào thuộc dự án ON_HOLD

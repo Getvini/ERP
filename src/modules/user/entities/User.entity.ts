@@ -15,6 +15,9 @@ export class Users extends BaseEntity {
     @Column()
     phoneNumber: string
 
+    @Column({ type: "date", nullable: true })
+    birthday: string | null
+
     @Column({ default: false })
     isLocked: boolean
 

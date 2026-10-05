@@ -1,4 +1,6 @@
 import axios from "axios";
+import fs from "fs";
+import path from "path";
 import { AppDataSource } from "../../../data-source";
 import { SecurityService } from "../../../shared/services/Security.Service";
 import { UserRole } from "../../account/entities/Account.entity";
@@ -148,7 +150,7 @@ export class ProjectProductDescriptionService {
             .join("");
     }
 
-    private async extractRawFileText(fileUrl: string): Promise<{ text: string | null; hasComplexLayout: boolean }> {
+    private async extractRawFileText(fileUrl: string): Promise<{ text: string | null; hasComplexLayout: boolean; warnings: string[]; method: string | null; visionPages: number[] }> {
         const aiServiceUrl = assertAiServiceUrl();
         const formData = new URLSearchParams();
         formData.append("url", fileUrl);
@@ -160,7 +162,10 @@ export class ProjectProductDescriptionService {
             });
             return {
                 text: response.data?.text ?? null,
-                hasComplexLayout: Boolean(response.data?.has_complex_layout)
+                hasComplexLayout: Boolean(response.data?.has_complex_layout),
+                warnings: Array.isArray(response.data?.warnings) ? response.data.warnings : [],
+                method: response.data?.method ?? null,
+                visionPages: Array.isArray(response.data?.vision_pages) ? response.data.vision_pages : []
             };
         } catch (error: any) {
             const message = error?.response?.data?.detail || error?.message || "Không thể trích xuất nội dung file";
@@ -168,12 +173,48 @@ export class ProjectProductDescriptionService {
         }
     }
 
-    private async extractFileText(fileUrl: string): Promise<{ extractedText: string | null; hasComplexLayout: boolean }> {
-        const { text, hasComplexLayout } = await this.extractRawFileText(fileUrl);
+    private async extractFileText(fileUrl: string) {
+        const { text, hasComplexLayout, warnings, method, visionPages } = await this.extractRawFileText(fileUrl);
         return {
             extractedText: text ? this.textToHtml(text) : null,
-            hasComplexLayout
+            hasComplexLayout,
+            warnings,
+            method,
+            visionPages
         };
+    }
+
+    // Gửi file thẳng sang AI service (field `file`) -> không cần Cloudinary, không bị giới hạn 10MB của Cloudinary
+    async extractForUpload(projectId: string, file: Express.Multer.File, actor?: Actor) {
+        const project = await this.assertProjectAccess(projectId, actor);
+        this.assertCanEditProductDescription(project, actor);
+
+        const ext = path.extname(file.originalname || "").toLowerCase();
+        if (![".pdf", ".docx"].includes(ext)) {
+            throw this.httpError("Chỉ hỗ trợ trích xuất từ file .pdf hoặc .docx", 400);
+        }
+
+        const aiServiceUrl = assertAiServiceUrl();
+        const formData = new FormData();
+        formData.append("file", new Blob([await fs.promises.readFile(file.path)]), file.originalname);
+        try {
+            const response = await axios.post(`${aiServiceUrl}/documents/extract`, formData, {
+                timeout: AI_SERVICE_REQUEST_TIMEOUT_MS,
+                maxBodyLength: AI_SERVICE_MAX_FETCH_BYTES,
+                maxContentLength: AI_SERVICE_MAX_FETCH_BYTES
+            });
+            const text: string | null = response.data?.text ?? null;
+            return {
+                extractedText: text ? this.textToHtml(text) : null,
+                hasComplexLayout: Boolean(response.data?.has_complex_layout),
+                warnings: Array.isArray(response.data?.warnings) ? response.data.warnings : [],
+                method: response.data?.method ?? null,
+                visionPages: Array.isArray(response.data?.vision_pages) ? response.data.vision_pages : []
+            };
+        } catch (error: any) {
+            const message = error?.response?.data?.detail || error?.message || "Không thể trích xuất nội dung file";
+            throw this.httpError(message, 400);
+        }
     }
 
     async extractForFile(projectId: string, fileUrl: string, actor?: Actor) {
@@ -185,8 +226,7 @@ export class ProjectProductDescriptionService {
             throw this.httpError("Vui lòng cung cấp fileUrl", 400);
         }
 
-        const { extractedText, hasComplexLayout } = await this.extractFileText(url);
-        return { extractedText, hasComplexLayout };
+        return this.extractFileText(url);
     }
 
     async aiFormat(projectId: string, text: string, productName?: string, actor?: Actor) {
@@ -209,7 +249,15 @@ export class ProjectProductDescriptionService {
                     maxContentLength: AI_SERVICE_MAX_FETCH_BYTES
                 }
             );
-            return { extractedText: response.data?.html ?? "" };
+            return {
+                extractedText: response.data?.html ?? "",
+                // Các dòng AI đã loại bỏ, để FE cho người dùng đối chiếu trước khi áp dụng
+                removed: Array.isArray(response.data?.removed) ? response.data.removed : [],
+                // File dài được AI xử lý theo nhiều phần; phần nào AI không xử lý được vẫn giữ đủ dòng và được nêu ở đây
+                warnings: Array.isArray(response.data?.warnings) ? response.data.warnings : [],
+                chunks: Number(response.data?.chunks) || 1,
+                fallbackLines: Number(response.data?.fallback_lines) || 0
+            };
         } catch (error: any) {
             const message = error?.response?.data?.detail || error?.message || "Không thể format nội dung";
             throw this.httpError(message, 400);
@@ -231,7 +279,8 @@ export class ProjectProductDescriptionService {
             }
 
             const fileUrl = item.fileUrl?.trim() || "";
-            if (!fileUrl) {
+            const hasExtractedText = typeof item.extractedText === "string" && item.extractedText.trim().length > 0;
+            if (!fileUrl && !hasExtractedText) {
                 throw this.httpError(`Vui lòng upload file thông tin chuẩn (doc/pdf) cho sản phẩm ${productName}`, 400);
             }
 
@@ -240,7 +289,7 @@ export class ProjectProductDescriptionService {
             const providedExtractedText = typeof item.extractedText === "string" ? item.extractedText.trim() : "";
             const extractedText = providedExtractedText
                 ? providedExtractedText
-                : (await this.extractFileText(fileUrl)).extractedText;
+                : fileUrl ? (await this.extractFileText(fileUrl)).extractedText : null;
             const documents = Array.isArray(item.documents)
                 ? item.documents
                     .filter((doc) => doc?.url?.trim())

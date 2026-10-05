@@ -4,7 +4,7 @@ import { TeamMembers, MemberRole, memberHasRole } from "../entities/TeamMember.e
 import { TeamMemberRoles } from "../entities/TeamMemberRole.entity";
 import { Users } from "../../user/entities/User.entity";
 import { SecurityService } from "../../../shared/services/Security.Service";
-import { UserRole } from "../../account/entities/Account.entity";
+import { SALES_ROLES, UserRole } from "../../account/entities/Account.entity";
 import { WorkloadService } from "../../../shared/services/Workload.Service";
 import { Projects, ProjectStatus } from "../entities/Project.entity";
 import { In } from "typeorm";
@@ -270,8 +270,15 @@ export class ProjectTeamService {
         }
         await this.assertCanMutateTeamMember(teamId, userId, actor);
         const team = await this.getOne(teamId);
-        const user = await this.userRepository.findOneBy({ id: userId });
+        const user = await this.userRepository.findOne({
+            where: { id: userId },
+            relations: ["accounts"]
+        });
         if (!user) throw new Error("Không tìm thấy người dùng");
+        const excludedAccountRoles = [UserRole.BOD, ...SALES_ROLES];
+        if (user.accounts?.some(account => excludedAccountRoles.includes(account.role))) {
+            throw this.httpError("Không thể thêm nhân sự có vai trò BOD, BD hoặc ADMIN_SALE vào đội dự án", 400);
+        }
 
         let member = await this.memberRepository.findOne({
             where: SecurityService.withTenant({

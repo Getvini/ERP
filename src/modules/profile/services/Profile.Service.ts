@@ -20,6 +20,7 @@ export class ProfileService {
             accountId: account.id,
             fullName: account.user?.fullName,
             phoneNumber: account.user?.phoneNumber,
+            birthday: account.user?.birthday,
             username: account.username,
             email: account.email,
             role: account.role,
@@ -37,7 +38,7 @@ export class ProfileService {
 
         if (!account) throw new Error("Không tìm thấy tài khoản");
 
-        const { fullName, phoneNumber, email, password } = data;
+        const { fullName, phoneNumber, birthday, email, password } = data;
 
         // 1. Update Password if provided
         if (password) {
@@ -57,8 +58,9 @@ export class ProfileService {
         // 3. Update User fields
         await AppDataSource.transaction(async (transactionalEntityManager) => {
             if (account.user) {
-                if (fullName) account.user.fullName = fullName;
-                if (phoneNumber) account.user.phoneNumber = phoneNumber;
+                if (fullName !== undefined) account.user.fullName = fullName;
+                if (phoneNumber !== undefined) account.user.phoneNumber = phoneNumber;
+                if (birthday !== undefined) account.user.birthday = birthday || null;
                 await transactionalEntityManager.save(account.user);
             }
             await transactionalEntityManager.save(account);

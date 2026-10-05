@@ -7,7 +7,7 @@ export class UserController {
 
     getAll = async (req: Request, res: Response) => {
         try {
-            const result = await this.userService.getAll(req.query as any);
+            const result = await this.userService.getAll(req.query as any, (req as any).user);
             res.status(200).json(result);
         } catch (error: any) {
             res.status(500).json({ message: error.message });
@@ -16,7 +16,7 @@ export class UserController {
 
     getOne = async (req: Request, res: Response) => {
         try {
-            const result = await this.userService.getOne(req.params.id as string);
+            const result = await this.userService.getOne(req.params.id as string, (req as any).user);
             res.status(200).json(result);
         } catch (error: any) {
             res.status(404).json({ message: error.message });
@@ -58,7 +58,7 @@ export class UserController {
     updateLaborContracts = async (req: Request, res: Response) => {
         try {
             const { laborContract } = req.body;
-            const result = await this.userService.updateLaborContracts(req.params.id as string, laborContract);
+            const result = await this.userService.updateLaborContracts(req.params.id as string, laborContract, (req as any).user);
             res.status(200).json(result);
         } catch (error: any) {
             res.status(400).json({ message: error.message });

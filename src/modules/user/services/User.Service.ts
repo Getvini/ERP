@@ -7,6 +7,9 @@ import { RedisService } from "../../../shared/services/Redis.Service";
 import { WorkloadService } from "../../../shared/services/Workload.Service";
 import { userEmitter, USER_EVENTS } from "../events/UserEmitter";
 
+type UserViewer = { id?: string; userId?: string; role?: string };
+
+const LABOR_CONTRACT_MANAGER_ROLES = [UserRole.BOD, UserRole.ADMIN, UserRole.ADMIN_SALE];
 
 export class UserService {
     private userRepository = AppDataSource.getRepository(Users);
@@ -15,6 +18,26 @@ export class UserService {
 
     private getCacheKey(key: string) {
         return key;
+    }
+
+    private canViewLaborContract(user: Users | any, viewer?: UserViewer) {
+        if (!viewer) return false;
+        if (LABOR_CONTRACT_MANAGER_ROLES.includes(viewer.role as UserRole)) return true;
+        return Boolean(viewer.userId && viewer.userId === user.id);
+    }
+
+    private assertCanManageLaborContract(viewer?: UserViewer) {
+        if (!LABOR_CONTRACT_MANAGER_ROLES.includes(viewer?.role as UserRole)) {
+            throw new Error("Bạn không có quyền cập nhật hợp đồng lao động");
+        }
+    }
+
+    private sanitizeLaborContract(user: any, viewer?: UserViewer) {
+        return {
+            ...user,
+            account: user.accounts?.[0] || user.account,
+            laborContract: this.canViewLaborContract(user, viewer) ? (user.laborContract || []) : []
+        };
     }
 
     private async getUserForMutation(id: string) {
@@ -30,8 +53,8 @@ export class UserService {
         };
     }
 
-    async getAll(filters: { role?: string, month?: number, year?: number } = {}) {
-        const cacheKey = this.getCacheKey(`users:all:${filters.role || 'all'}:${filters.month || 'current'}:${filters.year || 'current'}`);
+    async getAll(filters: { role?: string, month?: number, year?: number } = {}, viewer?: UserViewer) {
+        const cacheKey = this.getCacheKey(`users:all:${filters.role || 'all'}:${filters.month || 'current'}:${filters.year || 'current'}:${viewer?.role || 'anonymous'}:${viewer?.userId || viewer?.id || 'unknown'}`);
         return await RedisService.fetchWithCache(cacheKey, 3600, async () => {
             const users = await this.userRepository.find({
                 where: filters.role
@@ -42,6 +65,7 @@ export class UserService {
                     id: true,
                     fullName: true,
                     phoneNumber: true,
+                    birthday: true,
                     isLocked: true,
                     laborContract: true,
                     accounts: {
@@ -61,15 +85,14 @@ export class UserService {
             });
             const workloads = await this.workloadService.getWorkloadsForUsers(users.map(user => user.id), filters.month, filters.year);
             return users.map((user: any) => ({
-                ...user,
-                account: user.accounts?.[0],
+                ...this.sanitizeLaborContract(user, viewer),
                 workload: workloads.get(user.id) || null
             }));
         });
     }
 
-    async getOne(id: string) {
-        const user = await RedisService.fetchWithCache(this.getCacheKey(`users:detail:${id}`), 3600, async () => {
+    async getOne(id: string, viewer?: UserViewer) {
+        const user = await RedisService.fetchWithCache(this.getCacheKey(`users:detail:${id}:${viewer?.role || 'anonymous'}:${viewer?.userId || viewer?.id || 'unknown'}`), 3600, async () => {
             return await this.userRepository.findOne({
                 where: { id, isLocked: false },
                 relations: ["tasks", "accounts"],
@@ -77,6 +100,7 @@ export class UserService {
                     id: true,
                     fullName: true,
                     phoneNumber: true,
+                    birthday: true,
                     isLocked: true,
                     laborContract: true,
                     accounts: {
@@ -97,15 +121,12 @@ export class UserService {
         });
 
         if (!user) throw new Error("Không tìm thấy người dùng");
-        return {
-            ...(user as any),
-            account: (user as any).accounts?.[0]
-        };
+        return this.sanitizeLaborContract(user as any, viewer);
     }
 
     async create(data: any) {
         validateUserData(data);
-        const { username, password, email, fullName, phoneNumber, role, userId, isLocked } = data;
+        const { username, password, email, fullName, phoneNumber, birthday, role, userId, isLocked } = data;
 
         const existingAccount = await this.accountRepository.findOne({
             where: [
@@ -124,7 +145,7 @@ export class UserService {
         account.username = username;
         account.password = hashedPassword;
         account.email = email;
-        account.role = role || UserRole.STAFF_D;
+        account.role = role || UserRole.EDITOR_D;
 
         let user = userId ? await this.userRepository.findOne({ where: { id: userId } }) : null;
         if (!user) {
@@ -132,6 +153,7 @@ export class UserService {
             user.fullName = fullName;
             user.phoneNumber = phoneNumber;
         }
+        if (birthday !== undefined) user.birthday = birthday || null;
         if (isLocked !== undefined) user.isLocked = isLocked;
 
         let savedUser: Users | null = null;
@@ -143,7 +165,7 @@ export class UserService {
         });
 
         // Xóa cache danh sách khi có user mới
-        await RedisService.deleteCache(this.getCacheKey('users:all'));
+        await RedisService.deleteCache(this.getCacheKey('users:all*'));
 
         if (savedUser) userEmitter.emit(USER_EVENTS.CREATED, savedUser);
 
@@ -153,10 +175,11 @@ export class UserService {
     async update(id: string, data: any) {
         validateUserData(data);
         const user = await this.getUserForMutation(id);
-        const { fullName, phoneNumber, email, role, isActive, username, isLocked } = data;
+        const { fullName, phoneNumber, birthday, email, role, isActive, username, isLocked } = data;
 
         if (fullName !== undefined) user.fullName = fullName;
         if (phoneNumber !== undefined) user.phoneNumber = phoneNumber;
+        if (birthday !== undefined) user.birthday = birthday || null;
         if (isLocked !== undefined) user.isLocked = isLocked;
         if (data.laborContract !== undefined) user.laborContract = data.laborContract;
 
@@ -173,26 +196,27 @@ export class UserService {
         const savedUser = await this.userRepository.save(user);
 
         // Xóa cache danh sách và cache chi tiết của user vừa update
-        await RedisService.deleteCache(this.getCacheKey('users:all'));
-        await RedisService.deleteCache(this.getCacheKey(`users:detail:${id}`));
+        await RedisService.deleteCache(this.getCacheKey('users:all*'));
+        await RedisService.deleteCache(this.getCacheKey(`users:detail:${id}:*`));
 
         userEmitter.emit(USER_EVENTS.UPDATED, savedUser);
 
         return savedUser;
     }
 
-    async updateLaborContracts(id: string, laborContract: any[]) {
+    async updateLaborContracts(id: string, laborContract: any[], viewer?: UserViewer) {
+        this.assertCanManageLaborContract(viewer);
         const user = await this.getUserForMutation(id);
         user.laborContract = laborContract || [];
         const savedUser = await this.userRepository.save(user);
 
         // Xóa cache danh sách và cache chi tiết của user vừa update
-        await RedisService.deleteCache(this.getCacheKey('users:all'));
-        await RedisService.deleteCache(this.getCacheKey(`users:detail:${id}`));
+        await RedisService.deleteCache(this.getCacheKey('users:all*'));
+        await RedisService.deleteCache(this.getCacheKey(`users:detail:${id}:*`));
 
         userEmitter.emit(USER_EVENTS.UPDATED, savedUser);
 
-        return savedUser;
+        return this.sanitizeLaborContract(savedUser, viewer);
     }
 
     async delete(id: string) {
@@ -209,8 +233,8 @@ export class UserService {
         });
 
         // Xóa cache danh sách và cache chi tiết của user vừa xóa
-        await RedisService.deleteCache(this.getCacheKey('users:all'));
-        await RedisService.deleteCache(this.getCacheKey(`users:detail:${id}`));
+        await RedisService.deleteCache(this.getCacheKey('users:all*'));
+        await RedisService.deleteCache(this.getCacheKey(`users:detail:${id}:*`));
 
         userEmitter.emit(USER_EVENTS.DELETED, { id });
 
