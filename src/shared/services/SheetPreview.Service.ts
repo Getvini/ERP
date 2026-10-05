@@ -106,6 +106,11 @@ function buildWindow(workbook: XLSX.WorkBook, request: PreviewWindowRequest): Pr
 }
 
 export class SheetPreviewService {
+    static hasCached(key: string): boolean {
+        pruneCache();
+        return cache.has(key);
+    }
+
     static async fromCachedFile(key: string, load: () => Promise<Buffer>, request: PreviewWindowRequest): Promise<PreviewWindow> {
         pruneCache();
         let entry = cache.get(key);
