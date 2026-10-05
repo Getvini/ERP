@@ -19,18 +19,12 @@ export class CronHelper {
          * Task Status Expiry Job
          * Runs every 30 minutes to check for tasks that have passed their deadline.
          */
-        cron.schedule('*/30 * * * *', async () => {
+        cron.schedule('* */6 * * *', async () => {
             console.log('[Cron] Checking for overdue tasks at', new Date().toLocaleString());
             try {
                 const taskRepository = AppDataSource.getRepository(Tasks);
                 const now = new Date();
 
-                // Statuses that represent "Work in Progress" or "Pending" 
-                // and should be marked as OVERDUE if the deadline passes.
-                //
-                // ⚠️ KHÔNG thêm TaskStatus.ON_HOLD vào danh sách này.
-                // Task ON_HOLD thuộc dự án đang tạm dừng — không bao giờ được
-                // tự chuyển sang OVERDUE (sẽ phá vỡ trạng thái tạm dừng).
                 const activeStatuses = [
                     TaskStatus.PENDING,
                     TaskStatus.NOT_STARTED,
@@ -93,7 +87,7 @@ export class CronHelper {
                 console.error('[Cron] Error in overdue debts check:', error);
             }
         });
-        
+
         /**
          * Monthly Vinicoin Reset Job
          * Runs at 0:00 on the 1st day of every month.
