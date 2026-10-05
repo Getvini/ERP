@@ -11,6 +11,10 @@ type RateLimitConfig = {
 const RATE_LIMIT_MESSAGE = "Quá nhiều yêu cầu, vui lòng thử lại sau.";
 const GLOBAL_NAMESPACE = "global";
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+const WRITE_LIMIT_EXEMPT_PATHS = new Set([
+    "/api/spelling-check/preview",
+    "/api/spelling-check/preview-from-url"
+]);
 
 const getIpKey = (req: Request): string => {
     return ipKeyGenerator(req.ip || "unknown");
@@ -95,6 +99,11 @@ export const sensitiveLimiter = createLimiter({
 
 export const writeRateLimitMiddleware: RequestHandler = (req: Request, res: Response, next: NextFunction) => {
     if (!WRITE_METHODS.has(req.method.toUpperCase())) {
+        next();
+        return;
+    }
+
+    if (WRITE_LIMIT_EXEMPT_PATHS.has(`${req.baseUrl}${req.path}`.replace(/\/+$/, ""))) {
         next();
         return;
     }

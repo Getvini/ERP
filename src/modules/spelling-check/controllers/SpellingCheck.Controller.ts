@@ -85,6 +85,40 @@ export class SpellingCheckController {
         }
     };
 
+    preview = async (req: Request, res: Response) => {
+        try {
+            const file = (req as any).file;
+            const { fileKey, sheet, rowStart, rowCount, colStart, colCount } = req.body;
+            if (!fileKey) {
+                return res.status(400).json({ message: "Thiếu fileKey" });
+            }
+            const cacheKey = `file:${fileKey}`;
+            const request = { sheet, rowStart, rowCount, colStart, colCount };
+            if (file) {
+                const ext = "." + (String(file.originalname).split(".").pop() || "").toLowerCase();
+                if (![".xlsx", ".xlsm"].includes(ext)) {
+                    return res.status(400).json({ message: "Chỉ hỗ trợ xem trước file xlsx hoặc xlsm" });
+                }
+                const result = await SheetPreviewService.fromCachedFile(cacheKey, () => Promise.resolve(file.buffer), request);
+                return res.status(200).json(result);
+            }
+            if (!SheetPreviewService.hasCached(cacheKey)) {
+                return res.status(409).json({ message: "Cần gửi kèm file để xem trước", code: "PREVIEW_FILE_REQUIRED" });
+            }
+            const result = await SheetPreviewService.fromCachedFile(
+                cacheKey,
+                () => Promise.reject(Object.assign(new Error("Cần gửi kèm file để xem trước"), { statusCode: 409, code: "PREVIEW_FILE_REQUIRED" })),
+                request
+            );
+            res.status(200).json(result);
+        } catch (error: any) {
+            res.status(error.statusCode || error.response?.status || 500).json({
+                message: error.response?.data?.detail || error.message,
+                ...(error.code === "PREVIEW_FILE_REQUIRED" ? { code: error.code } : {})
+            });
+        }
+    };
+
     getStatus = async (req: Request, res: Response) => {
         try {
             const result = await this.service.getStatus(req.params.jobId as string);
