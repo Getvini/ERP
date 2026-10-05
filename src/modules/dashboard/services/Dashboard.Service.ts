@@ -205,7 +205,10 @@ export class DashboardService {
                 code: true,
                 plannedStartDate: true,
                 plannedEndDate: true,
-                assignee: { id: true },
+                assignee: { 
+                    id: true,
+                    fullName: true
+                },
                 helper: { id: true },
                 project: {
                     id: true,
@@ -260,7 +263,10 @@ export class DashboardService {
                 code: true,
                 plannedStartDate: true,
                 plannedEndDate: true,
-                assignee: { id: true },
+                assignee: { 
+                    id: true,
+                    fullName: true
+                },
                 helper: { id: true },
                 project: {
                     id: true,
