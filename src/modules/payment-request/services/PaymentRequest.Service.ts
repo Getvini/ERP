@@ -196,10 +196,7 @@ export class PaymentRequestService {
                 throw new Error("Công việc này không được giao cho bạn");
             }
             request.costPrice = task.cost;
-        } else if (dto.type === PaymentRequestType.OTHER_WORK) {
-            if (!dto.taskId) {
-                throw new Error("Vui lòng chọn công việc không thuộc dự án");
-            }
+        } else if (dto.type === PaymentRequestType.OTHER_WORK && dto.taskId) {
             const task = await this.taskRepo.findOne({ where: { id: dto.taskId }, relations: ["project", "assignee"] });
             if (!task) {
                 throw new Error("Không tìm thấy công việc");
