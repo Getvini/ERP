@@ -1,10 +1,12 @@
-import { Column, Entity, JoinColumn, ManyToOne } from "typeorm";
+import { Column, Entity, Index, JoinColumn, ManyToOne } from "typeorm";
 import { BaseEntity } from "../../../shared/entities/BaseEntity";
 import { Users } from "../../user/entities/User.entity";
 import { ChatRooms } from "./ChatRoom.entity";
 
 @Entity()
+@Index(["roomId", "userId"])
 export class ChatParticipants extends BaseEntity {
+    @Index()
     @Column({ type: "varchar", length: 26 })
     roomId: string;
 
@@ -12,6 +14,7 @@ export class ChatParticipants extends BaseEntity {
     @JoinColumn({ name: "roomId" })
     room: ChatRooms;
 
+    @Index()
     @Column({ type: "varchar", length: 26 })
     userId: string;
 

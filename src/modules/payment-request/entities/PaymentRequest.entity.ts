@@ -1,4 +1,4 @@
-import { Entity, Column, ManyToOne, JoinColumn } from "typeorm";
+import { Entity, Column, ManyToOne, JoinColumn, Index } from "typeorm";
 import { BaseEntity } from "../../../shared/entities/BaseEntity";
 import { Projects } from "../../project/entities/Project.entity";
 import { Tasks } from "../../task/entities/Task.entity";
@@ -79,6 +79,8 @@ export interface PaymentRequestHistoryEntry {
 }
 
 @Entity()
+@Index(["approvalStatus", "dueDate"])
+@Index(["projectId", "approvalStatus"])
 export class PaymentRequests extends BaseEntity {
 
     @Column({
@@ -106,6 +108,7 @@ export class PaymentRequests extends BaseEntity {
     @JoinColumn({ name: "confirmedDueDateById" })
     confirmedDueDateBy: Users | null;
 
+    @Index()
     @Column({ type: "varchar", length: 26, nullable: true })
     projectId: string | null;
 
@@ -113,6 +116,7 @@ export class PaymentRequests extends BaseEntity {
     @JoinColumn({ name: "projectId" })
     project: Projects | null;
 
+    @Index()
     @Column({ type: "varchar", length: 26, nullable: true })
     taskId: string | null;
 
@@ -144,6 +148,7 @@ export class PaymentRequests extends BaseEntity {
     @Column({ type: "jsonb", default: [] })
     invoicePdfs: PaymentRequestFile[];
 
+    @Index()
     @Column({ type: "varchar", length: 26 })
     requesterId: string;
 
@@ -151,6 +156,7 @@ export class PaymentRequests extends BaseEntity {
     @JoinColumn({ name: "requesterId" })
     requester: Users;
 
+    @Index()
     @Column({
         type: "enum",
         enum: PaymentRequestApprovalStatus,
@@ -194,6 +200,7 @@ export class PaymentRequests extends BaseEntity {
     @Column({ type: "text", nullable: true })
     bodDecisionReason: string | null;
 
+    @Index()
     @Column({
         type: "enum",
         enum: PaymentDueStatus,

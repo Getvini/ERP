@@ -1,4 +1,4 @@
-import { Entity, Column, ManyToOne, OneToMany } from "typeorm";
+import { Entity, Column, ManyToOne, OneToMany, Index } from "typeorm";
 import { BaseEntity } from "../../../shared/entities/BaseEntity";
 import { Customers } from "../../customer/entities/Customer.entity";
 import { Quotations } from "../../quotation/entities/Quotation.entity";
@@ -73,6 +73,7 @@ export class Opportunities extends BaseEntity {
     @Column({ type: "int", default: 0 })
     durationMonths: number;
 
+    @Index()
     @Column({
         type: "enum",
         enum: OpportunityStatus,

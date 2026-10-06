@@ -88,7 +88,12 @@ export const AppDataSource = new DataSource({
         }
     ),
     extra: {
+        max: 25,
+        min: 5,
+        idleTimeoutMillis: 30000,
         connectionTimeoutMillis: 10000,
+        statement_timeout: 15000,
+        query_timeout: 15000,
     },
     synchronize: true,
     schema: "public",
