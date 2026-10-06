@@ -218,7 +218,7 @@ export class TaskAssignmentService extends TaskBaseService {
     }
 
     async update(id: string, data: Partial<Tasks> & { assigneeId?: string }, currentUser?: { id: string, userId?: string; role?: string }) {
-        const task = await this.getOne(id);
+        const task = await this.getOne(id, currentUser);
         this.assertTaskNotLocked(task);
         await assertSubtaskPlanApproved(this.taskRepository, task, "cập nhật subtask");
 
@@ -233,6 +233,18 @@ export class TaskAssignmentService extends TaskBaseService {
         }
         if (task.status === TaskStatus.NOT_STARTED && data.actualStartDate) {
             throw this.httpError("Ngày bắt đầu thực tế chỉ được ghi khi bắt đầu công việc", 409);
+        }
+        if (data.plannedEndDate !== undefined) {
+            const hasMainPerformer = Boolean(task.assigneeId || task.vendor || task.performerType === PerformerType.VENDOR);
+            if (!hasMainPerformer) {
+                throw this.httpError("Chỉ có thể sửa deadline sau khi công việc đã được phân công", 400);
+            }
+
+            const canEditDeadline = isProjectManagementRole(currentUser?.role) ||
+                this.isProjectOperatorFromTeam(task.project?.team, currentUser);
+            if (!canEditDeadline) {
+                throw this.httpError("Chỉ Account hoặc PM của dự án mới được sửa deadline công việc", 403);
+            }
         }
 
         const completionStatuses = [

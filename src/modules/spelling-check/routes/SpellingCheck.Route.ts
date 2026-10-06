@@ -13,6 +13,7 @@ const upload = multer({
 router.post("/sheets", upload.single("file"), controller.listSheets);
 router.post("/sheets-from-url", controller.listSheetsFromUrl);
 router.post("/preview-from-url", controller.previewFromUrl);
+router.post("/preview", upload.single("file"), controller.preview);
 router.post("/start", upload.single("file"), controller.start);
 router.post("/start-from-url", controller.startFromUrl);
 router.get("/:jobId", controller.getStatus);

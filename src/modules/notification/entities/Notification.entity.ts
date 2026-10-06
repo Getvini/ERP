@@ -1,8 +1,10 @@
-import { Entity, Column, ManyToOne, Relation } from "typeorm"
+import { Entity, Column, ManyToOne, Relation, Index } from "typeorm"
 import { BaseEntity } from "../../../shared/entities/BaseEntity"
 import { Users } from "../../user/entities/User.entity"
 
 @Entity()
+@Index(["recipient", "createdAt"])
+@Index(["recipient", "isRead", "createdAt"])
 export class Notifications extends BaseEntity {
 
     @Column()
@@ -29,6 +31,7 @@ export class Notifications extends BaseEntity {
     @Column({ nullable: true })
     relatedEntityType: string
 
+    @Index()
     @ManyToOne(() => Users)
     recipient: Relation<Users>
 

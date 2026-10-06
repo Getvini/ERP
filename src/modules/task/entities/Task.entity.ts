@@ -15,6 +15,8 @@ import { OpportunityServiceJobs } from "../../opportunity-service/entities/Oppor
 
 
 @Entity()
+@Index(["assigneeId", "status", "plannedEndDate"])
+@Index(["project", "status"])
 export class Tasks extends BaseEntity {
 
     @Column({ nullable: true })

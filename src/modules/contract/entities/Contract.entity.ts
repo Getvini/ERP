@@ -29,6 +29,7 @@ export enum PartnerCommissionStatus {
 }
 
 @Entity()
+@Index(["status", "createdAt"])
 export class Contracts extends BaseEntity {
 
     @Index()
