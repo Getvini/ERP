@@ -39,6 +39,7 @@ export type DashboardScopeContext = ResolvedDashboardScope & {
     viewerRole: UserRole;
     availableProjects: DashboardProjectOption[];
     availableMembers: DashboardMemberOption[];
+    activeProjects?: Projects[];
 };
 
 const ACTIVE_PROJECT_STATUSES = [
@@ -64,22 +65,41 @@ export class DashboardScopeService {
         }
 
         const isSystemViewer = [UserRole.ADMIN, UserRole.BOD].includes(actor.role);
+        const isPMViewer = actor.role === UserRole.PM;
+        const requestedAnotherUser = Boolean(requestedUserId && requestedUserId !== viewerUserId);
+        const needPersonalProjects = requestedAnotherUser || (!isSystemViewer && (!isPMViewer || mode === "personal"));
 
-        const allActiveProjects = await this.projectRepo.find({
-            where: { status: In(ACTIVE_PROJECT_STATUSES) },
-            relations: isSystemViewer
-                ? ["contract", "contract.customer"]
-                : [
-                    "contract",
-                    "contract.customer",
-                    "team",
-                    "team.teamLead",
-                    "team.members",
-                    "team.members.user",
-                    "team.members.user.accounts"
-                ],
-            order: { createdAt: "DESC" }
-        });
+        const [allActiveProjects, systemUsers, personalProjects] = await Promise.all([
+            this.projectRepo.find({
+                where: isSystemViewer
+                    ? { status: In(ACTIVE_PROJECT_STATUSES) }
+                    : [
+                        { status: In(ACTIVE_PROJECT_STATUSES), team: { teamLead: { id: viewerUserId } } },
+                        { status: In(ACTIVE_PROJECT_STATUSES), team: { members: { user: { id: viewerUserId } } } }
+                    ],
+                relations: isSystemViewer
+                    ? ["contract", "contract.customer"]
+                    : [
+                        "contract",
+                        "contract.customer",
+                        "team",
+                        "team.teamLead",
+                        "team.members",
+                        "team.members.user"
+                    ],
+                order: { createdAt: "DESC" }
+            }),
+            isSystemViewer
+                ? this.userRepo.find({
+                    where: { isLocked: false },
+                    relations: ["accounts"],
+                    order: { fullName: "ASC" }
+                })
+                : Promise.resolve([]),
+            needPersonalProjects
+                ? this.findPersonalProjects(viewerUserId)
+                : Promise.resolve([])
+        ]);
 
         const isExcludedSaleRole = [UserRole.BD, UserRole.ADMIN_SALE].includes(actor.role);
 
@@ -117,19 +137,10 @@ export class DashboardScopeService {
         });
         managedMemberRoles.set(viewerUserId, managedMemberRoles.get(viewerUserId) || actor.role);
 
-        const personalProjects = await this.findPersonalProjects(viewerUserId);
         const targetUserId = requestedUserId || viewerUserId;
         const targetPersonalProjects = targetUserId === viewerUserId
             ? personalProjects
-            : await this.findPersonalProjects(targetUserId);
-
-        const systemUsers = isSystemViewer
-            ? await this.userRepo.find({
-                where: { isLocked: false },
-                relations: ["accounts"],
-                order: { fullName: "ASC" }
-            })
-            : [];
+            : (needPersonalProjects ? await this.findPersonalProjects(targetUserId) : []);
 
         const resolved = resolveDashboardScope({
             viewerUserId,
@@ -165,7 +176,8 @@ export class DashboardScopeService {
             viewerUserId,
             viewerRole: actor.role,
             availableProjects,
-            availableMembers
+            availableMembers,
+            activeProjects: allActiveProjects
         };
     }
 

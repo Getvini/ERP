@@ -14,8 +14,10 @@ export enum DebtStatus {
 }
 
 @Entity()
+@Index(["status", "dueDate"])
 export class Debts extends BaseEntity {
 
+    @Index()
     @ManyToOne(() => Contracts, (contract) => contract.debts)
     contract: Contracts;
 

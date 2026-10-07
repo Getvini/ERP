@@ -19,6 +19,7 @@ export enum QuotationType {
 }
 
 @Entity()
+@Index(["status", "createdAt"])
 export class Quotations extends BaseEntity {
 
     @Column({ type: "text", nullable: true })

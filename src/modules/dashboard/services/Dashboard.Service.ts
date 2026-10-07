@@ -2,8 +2,9 @@ import { AppDataSource } from "../../../data-source";
 import { Contracts, ContractStatus } from "../../contract/entities/Contract.entity";
 import { Customers } from "../../customer/entities/Customer.entity";
 import { Debts, DebtStatus } from "../../debt/entities/Debt.entity";
+import { DebtPayments } from "../../debt/entities/DebtPayment.entity";
 import { Projects, ProjectStatus } from "../../project/entities/Project.entity";
-import { ContractServiceStatus } from "../../contract/entities/ContractService.entity";
+import { ContractServices, ContractServiceStatus } from "../../contract/entities/ContractService.entity";
 import { Quotations, QuotationStatus } from "../../quotation/entities/Quotation.entity";
 import { Tasks } from "../../task/entities/Task.entity";
 import { TaskStatus } from "../../../shared/entities/Enums";
@@ -38,6 +39,7 @@ export class DashboardService {
         const data: any = {};
         const dateFilter = this.getDateFilter(month, year);
         const scope = await this.scopeService.resolve(actor, requestedUserId, projectId, mode);
+
         const userId = scope.targetUserId;
         const role = actor.role;
 
@@ -53,10 +55,6 @@ export class DashboardService {
             mode: scope.mode
         };
 
-        // getAllStaffWorkloads() chạy 1 aggregate query trên toàn bộ task của toàn bộ staff - khá nặng.
-        // Trước đây với Admin/BOD (canSelectMembers = true VÀ type = SYSTEM) hàm này bị gọi 2 LẦN
-        // trong cùng 1 request (1 lần ở đây, 1 lần trong khối admin bên dưới). Giờ chỉ gọi tối đa 1 lần,
-        // và chạy song song với getAdminMetrics (2 việc này độc lập, không cần chờ nhau).
         const [staffWorkloads, adminMetrics] = await Promise.all([
             scope.canSelectMembers
                 ? this.workloadService.getAllStaffWorkloads(month, year)
@@ -84,15 +82,37 @@ export class DashboardService {
         const ledProjects = ledProjectIds.length > 0
             ? await this.projectRepo.find({
                 where: { id: In(ledProjectIds) },
-                relations: ["contract", "contract.services"]
+                relations: ["contract"]
             })
             : [];
 
         if (ledProjects.length > 0) {
+            const ledContractIds = ledProjects.map(p => p.contract?.id).filter(Boolean) as string[];
+            const ledStatsMap = new Map<string, { totalServices: number; completedServices: number }>();
+            if (ledContractIds.length > 0) {
+                const rawStats = await AppDataSource.getRepository(ContractServices)
+                    .createQueryBuilder("cs")
+                    .innerJoin("cs.contract", "contract")
+                    .select("contract.id", "contractId")
+                    .addSelect("COUNT(cs.id)", "totalServices")
+                    .addSelect(`COUNT(CASE WHEN cs.status = :compStatus THEN 1 END)`, "completedServices")
+                    .where("contract.id IN (:...contractIds)", { contractIds: Array.from(new Set(ledContractIds)) })
+                    .setParameter("compStatus", ContractServiceStatus.COMPLETED)
+                    .groupBy("contract.id")
+                    .getRawMany();
+
+                for (const s of rawStats) {
+                    ledStatsMap.set(s.contractId, {
+                        totalServices: parseInt(s.totalServices, 10) || 0,
+                        completedServices: parseInt(s.completedServices, 10) || 0,
+                    });
+                }
+            }
+
             data.teamLead = ledProjects.map(p => {
-                const services = p.contract?.services || [];
-                const totalServices = services.length;
-                const completedServices = services.filter(s => s.status === ContractServiceStatus.COMPLETED).length;
+                const stats = p.contract?.id ? ledStatsMap.get(p.contract.id) : undefined;
+                const totalServices = stats?.totalServices || 0;
+                const completedServices = stats?.completedServices || 0;
                 return {
                     id: p.id,
                     name: p.name,
@@ -205,7 +225,10 @@ export class DashboardService {
                 code: true,
                 plannedStartDate: true,
                 plannedEndDate: true,
-                assignee: { id: true },
+                assignee: { 
+                    id: true,
+                    fullName: true
+                },
                 helper: { id: true },
                 project: {
                     id: true,
@@ -230,63 +253,62 @@ export class DashboardService {
         const activeTasks = rawPersonalTasks.filter(t => !t.project || (t.project.status !== ProjectStatus.COMPLETED && t.project.status !== ProjectStatus.CANCELLED));
 
         // 5. Role-based Tasks (for MetricCardsGrid / roleStats)
-        const roleTaskBaseConditions: any[] = [];
-        if (scope.type === DashboardScopeType.SYSTEM) {
-            roleTaskBaseConditions.push({ ...(projectId && { project: { id: projectId } }) });
-        } else if (scope.type === DashboardScopeType.MANAGEMENT) {
-            roleTaskBaseConditions.push({ project: { id: projectId || In(scope.projectIds) } });
+        let activeRoleTasks: Tasks[];
+
+        if (scope.type === DashboardScopeType.PERSONAL) {
+            // Khi xem Dashboard cá nhân, role tasks trùng khớp với personal tasks -> Tái sử dụng, không query lại DB
+            activeRoleTasks = activeTasks;
         } else {
-            roleTaskBaseConditions.push({
-                assignee: { id: userId },
-                ...(projectId && { project: { id: projectId } })
-            });
-            roleTaskBaseConditions.push({
-                helper: { id: userId },
-                ...(projectId && { project: { id: projectId } })
-            });
-        }
-        const taskWhereConditions = roleTaskBaseConditions.flatMap(condition =>
-            this.withTaskPeriod(condition, dateFilter)
-        );
-
-        const rawRoleTasks = await this.taskRepo.find({
-            where: taskWhereConditions,
-            relations: ["project", "project.contract", "project.contract.customer", "project.contract.services", "assignee"],
-            select: {
-                id: true,
-                name: true,
-                nickname: true,
-                status: true,
-                code: true,
-                plannedStartDate: true,
-                plannedEndDate: true,
-                assignee: { id: true },
-                helper: { id: true },
-                project: {
-                    id: true,
-                    name: true,
-                    status: true,
-                    contract: {
-                        id: true,
-                        customer: {
-                            id: true,
-                            name: true
-                        },
-                        services: {
-                            id: true,
-                            status: true
-                        }
-                    }
+            const roleTaskBaseConditions: any[] = [];
+            if (scope.type === DashboardScopeType.SYSTEM) {
+                roleTaskBaseConditions.push({ ...(projectId && { project: { id: projectId } }) });
+            } else if (scope.type === DashboardScopeType.MANAGEMENT) {
+                const targetProjectFilter = projectId
+                    ? { id: projectId }
+                    : (scope.projectIds?.length > 0 ? { id: In(scope.projectIds) } : undefined);
+                if (targetProjectFilter) {
+                    roleTaskBaseConditions.push({ project: targetProjectFilter });
                 }
-            },
-            order: { plannedEndDate: "DESC" }
-        });
+            }
 
-        const roleTaskMap = new Map();
-        rawRoleTasks.forEach(t => {
-            if (t && t.id && !roleTaskMap.has(t.id)) roleTaskMap.set(t.id, t);
-        });
-        const activeRoleTasks = Array.from(roleTaskMap.values()).filter(t => !t.project || (t.project.status !== ProjectStatus.COMPLETED && t.project.status !== ProjectStatus.CANCELLED));
+            const taskWhereConditions = roleTaskBaseConditions.flatMap(condition =>
+                this.withTaskPeriod(condition, dateFilter)
+            );
+
+            // Bỏ quan hệ 1-N "project.contract.services" để triệt tiêu Cartesian Product (Tích Đề-các)
+            const rawRoleTasks = taskWhereConditions.length > 0
+                ? await this.taskRepo.find({
+                    where: taskWhereConditions,
+                    relations: ["project", "project.contract", "project.contract.customer", "assignee", "helper"],
+                    select: {
+                        id: true,
+                        name: true,
+                        nickname: true,
+                        status: true,
+                        code: true,
+                        plannedStartDate: true,
+                        plannedEndDate: true,
+                        assignee: { id: true, fullName: true },
+                        helper: { id: true },
+                        project: {
+                            id: true,
+                            name: true,
+                            status: true,
+                            contract: {
+                                id: true,
+                                customer: {
+                                    id: true,
+                                    name: true
+                                }
+                            }
+                        }
+                    },
+                    order: { plannedEndDate: "DESC" }
+                })
+                : [];
+
+            activeRoleTasks = rawRoleTasks.filter(t => !t.project || (t.project.status !== ProjectStatus.COMPLETED && t.project.status !== ProjectStatus.CANCELLED));
+        }
         const workTasks = selectDashboardWorkItems(
             scope.type,
             activeTasks,
@@ -340,18 +362,59 @@ export class DashboardService {
         }, {});
 
         // Participating Projects
-        const teamProjects = scope.projectIds.length > 0 ? await this.projectRepo.find({
-            where: { id: In(scope.projectIds) },
-            relations: ["contract", "contract.customer", "contract.services", "team", "team.teamLead", "team.members", "team.members.user"]
-        }) : [];
+        const canReuseActiveProjects = Boolean(
+            scope.activeProjects && (
+                scope.type === DashboardScopeType.SYSTEM ||
+                scope.type === DashboardScopeType.MANAGEMENT
+            )
+        );
+        const teamProjects = canReuseActiveProjects
+            ? scope.activeProjects!
+            : (scope.projectIds.length > 0 ? await this.projectRepo.find({
+                where: {
+                    id: In(scope.projectIds),
+                    status: In([ProjectStatus.PENDING_CONFIRMATION, ProjectStatus.CONFIRMED, ProjectStatus.IN_PROGRESS])
+                },
+                relations: ["contract", "contract.customer", "team", "team.teamLead", "team.members", "team.members.user"]
+            }) : []);
+
+        // Batch aggregate service counts for all relevant contracts to avoid Cartesian product explosion
+        const contractIdsToQuery = new Set<string>();
+        teamProjects.forEach(p => {
+            if (p.contract?.id) contractIdsToQuery.add(p.contract.id);
+        });
+        activeTasks.forEach(t => {
+            if (t.project?.contract?.id) contractIdsToQuery.add(t.project.contract.id);
+        });
+
+        const serviceStatsMap = new Map<string, { totalServices: number; completedServices: number }>();
+        if (contractIdsToQuery.size > 0) {
+            const rawStats = await AppDataSource.getRepository(ContractServices)
+                .createQueryBuilder("cs")
+                .innerJoin("cs.contract", "contract")
+                .select("contract.id", "contractId")
+                .addSelect("COUNT(cs.id)", "totalServices")
+                .addSelect(`COUNT(CASE WHEN cs.status = :compStatus THEN 1 END)`, "completedServices")
+                .where("contract.id IN (:...contractIds)", { contractIds: Array.from(contractIdsToQuery) })
+                .setParameter("compStatus", ContractServiceStatus.COMPLETED)
+                .groupBy("contract.id")
+                .getRawMany();
+
+            for (const s of rawStats) {
+                serviceStatsMap.set(s.contractId, {
+                    totalServices: parseInt(s.totalServices, 10) || 0,
+                    completedServices: parseInt(s.completedServices, 10) || 0,
+                });
+            }
+        }
 
         const projectMap = new Map();
 
         const addProjectToMap = (project: any) => {
             if (project && !projectMap.has(project.id)) {
-                const services = project.contract?.services || [];
-                const totalServices = services.length;
-                const completedServices = services.filter(s => s.status === ContractServiceStatus.COMPLETED).length;
+                const stats = project.contract?.id ? serviceStatsMap.get(project.contract.id) : undefined;
+                const totalServices = stats?.totalServices || 0;
+                const completedServices = stats?.completedServices || 0;
 
                 let userRole: string | null = null;
                 if (project.team) {
@@ -382,6 +445,27 @@ export class DashboardService {
         const participatingProjects = Array.from(projectMap.values()).filter(p =>
             [ProjectStatus.PENDING_CONFIRMATION, ProjectStatus.CONFIRMED, ProjectStatus.IN_PROGRESS].includes(p.status)
         );
+
+        if (data.admin) {
+            data.admin.currentProjects = teamProjects.map(project => {
+                const stats = project.contract?.id ? serviceStatsMap.get(project.contract.id) : undefined;
+                const serviceCount = stats?.totalServices || 0;
+                const completedServiceCount = stats?.completedServices || 0;
+                return {
+                    id: project.id,
+                    name: project.name,
+                    status: project.status,
+                    customerName: project.contract?.customer?.name,
+                    teamName: project.team?.name,
+                    teamLeadName: project.team?.teamLead?.fullName,
+                    plannedStartDate: project.plannedStartDate,
+                    plannedEndDate: project.plannedEndDate,
+                    serviceCount,
+                    completedServiceCount,
+                    progress: serviceCount > 0 ? Math.round((completedServiceCount / serviceCount) * 100) : 0
+                };
+            });
+        }
 
         // Chart Stats (Still using yearly context if year provided, otherwise current year)
         const chartYear = year || new Date().getFullYear();
@@ -462,11 +546,14 @@ export class DashboardService {
                 } : undefined
             }));
 
+        const memberWorkload = staffWorkloads?.find(w => w.userId === userId)
+            ?? await this.workloadService.getWorkloadForUser(userId, month, year);
+
         data.member = {
             vinicoin,
             vinicoinTotal,
             vinicoinWithdrawn,
-            workload: await this.workloadService.getWorkloadForUser(userId, month, year),
+            workload: memberWorkload,
             totalTasks: workTasks.length,
             statusCounts,
             doingCount: (statusCounts[TaskStatus.DOING] || 0) + (statusCounts[TaskStatus.REWORKING] || 0) + (statusCounts[TaskStatus.REJECTED] || 0),
@@ -560,63 +647,63 @@ export class DashboardService {
         ];
     }
 
-    private async getAdminMetrics(dateFilter: any | null, projectId?: string, month?: number, year?: number) {
+    private async getAdminMetrics(
+        dateFilter: any | null,
+        projectId?: string,
+        month?: number,
+        year?: number
+    ) {
         const thirtyDaysAgo = new Date();
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
         const dateRange = this.getDateRange(month, year);
 
-        const revenueQb = this.contractRepo.createQueryBuilder("contract")
-            .select("COALESCE(SUM(contract.sellingPrice), 0)", "totalRevenue")
-            .where("contract.status IN (:...statuses)", {
-                statuses: [ContractStatus.SIGNED, ContractStatus.COMPLETED]
-            });
-        if (projectId) {
-            revenueQb.innerJoin("contract.project", "project")
-                .andWhere("project.id = :projectId", { projectId });
-        }
-        if (dateRange) revenueQb.andWhere("contract.createdAt BETWEEN :dStart AND :dEnd", {
-            dStart: dateRange.start,
-            dEnd: dateRange.end
-        });
+        // Build single combined query for scalar metrics (totalCustomers, newCustomers, totalRevenue, totalDebt)
+        const params: any[] = [];
+        let pIdx = 1;
 
-        const debtQb = this.debtRepo.createQueryBuilder("debt")
-            .leftJoin("debt.payments", "payment")
-            .select("debt.id", "debtId")
-            .addSelect("debt.amount", "amount")
-            .addSelect("COALESCE(SUM(payment.amount), 0)", "paidAmount")
-            .where("debt.status IN (:...statuses)", {
-                statuses: [DebtStatus.UNPAID, DebtStatus.PARTIAL]
-            })
-            .groupBy("debt.id")
-            .addGroupBy("debt.amount");
+        let custWhere = "1=1";
         if (projectId) {
-            debtQb.innerJoin("debt.contract", "contract")
-                .innerJoin("contract.project", "project")
-                .andWhere("project.id = :projectId", { projectId });
+            custWhere += ` AND cust.id IN (SELECT c."customerId" FROM contracts c JOIN projects p ON p."contractId" = c.id WHERE p.id = $${pIdx++})`;
+            params.push(projectId);
+        }
+        let custDateFilter = "";
+        if (dateRange) {
+            custDateFilter = ` AND cust."createdAt" BETWEEN $${pIdx++} AND $${pIdx++}`;
+            params.push(dateRange.start, dateRange.end);
         }
 
-        const [totalCustomers, newCustomers, revenueResult, debtResult] = await Promise.all([
-            this.customerRepo.count({
-                where: {
-                    ...(projectId && { contracts: { project: { id: projectId } } }),
-                    ...(dateFilter && { createdAt: dateFilter })
-                } as any
-            }),
-            this.customerRepo.count({
-                where: {
-                    ...(projectId && { contracts: { project: { id: projectId } } }),
-                    createdAt: Between(thirtyDaysAgo, new Date())
-                } as any
-            }),
-            revenueQb.getRawOne<{ totalRevenue: string }>(),
-            debtQb.getRawMany<{ debtId: string; amount: string; paidAmount: string }>()
-        ]);
+        let newCustWhere = `cust."createdAt" >= $${pIdx++}`;
+        params.push(thirtyDaysAgo);
+        if (projectId) {
+            newCustWhere += ` AND cust.id IN (SELECT c."customerId" FROM contracts c JOIN projects p ON p."contractId" = c.id WHERE p.id = $${pIdx++})`;
+            params.push(projectId);
+        }
 
-        const totalRevenue = parseFloat(revenueResult?.totalRevenue || "0");
-        const totalDebt = debtResult.reduce((sum, row) => {
-            const remaining = parseFloat(row.amount) - parseFloat(row.paidAmount || "0");
-            return sum + Math.max(0, remaining);
-        }, 0);
+        let revWhere = `c.status IN ('SIGNED', 'COMPLETED')`;
+        if (projectId) {
+            revWhere += ` AND c.id IN (SELECT p."contractId" FROM projects p WHERE p.id = $${pIdx++})`;
+            params.push(projectId);
+        }
+        if (dateRange) {
+            revWhere += ` AND c."createdAt" BETWEEN $${pIdx++} AND $${pIdx++}`;
+            params.push(dateRange.start, dateRange.end);
+        }
+
+        let debtWhere = `d.status IN ('UNPAID', 'PARTIAL')`;
+        if (projectId) {
+            debtWhere += ` AND d."contractId" IN (SELECT p."contractId" FROM projects p WHERE p.id = $${pIdx++})`;
+            params.push(projectId);
+        }
+
+        const scalarSql = `
+            SELECT
+                (SELECT COUNT(DISTINCT cust.id) FROM customers cust WHERE ${custWhere}${custDateFilter}) AS "totalCustomers",
+                (SELECT COUNT(DISTINCT cust.id) FROM customers cust WHERE ${newCustWhere}) AS "newCustomers",
+                (SELECT COALESCE(SUM(c."sellingPrice"), 0) FROM contracts c WHERE ${revWhere}) AS "totalRevenue",
+                (SELECT COALESCE(SUM(GREATEST(0, d.amount - COALESCE(
+                    (SELECT SUM(dp.amount) FROM debt_payments dp WHERE dp."debtId" = d.id), 0
+                ))), 0) FROM debts d WHERE ${debtWhere}) AS "totalDebt"
+        `;
 
         const quotationWhere: any[] = [
             {
@@ -636,22 +723,106 @@ export class DashboardService {
             ...(projectId && { project: { id: projectId } })
         };
 
-        const [pendingQuotations, pendingContracts, quotationApprovalCount, contractApprovalCount] = await Promise.all([
-            this.quotationRepo.find({
-                where: quotationWhere,
-                relations: ["opportunity", "opportunity.customer", "opportunity.createdBy", "createdBy"],
-                order: { createdAt: "DESC" },
-                take: 20
-            }),
-            this.contractRepo.find({
-                where: contractWhere,
-                relations: ["customer", "opportunity", "createdBy"],
-                order: { createdAt: "DESC" },
-                take: 20
-            }),
-            this.quotationRepo.count({ where: quotationWhere }),
-            this.contractRepo.count({ where: contractWhere })
+        // Run all metrics queries in parallel: 1 scalar batch + quotations + contracts (only 3 queries)
+        const [
+            metricsRow,
+            pendingQuotations,
+            pendingContracts
+        ] = await Promise.all([
+            this.debtRepo.manager.query(scalarSql, params).then(rows => rows?.[0]),
+            (() => {
+                const qb = this.quotationRepo.createQueryBuilder("q")
+                    .leftJoin("q.opportunity", "opp")
+                    .leftJoin("opp.customer", "cust")
+                    .leftJoin("opp.createdBy", "oppCreator")
+                    .leftJoin("q.createdBy", "creator")
+                    .select([
+                        "q.id AS id",
+                        "q.version AS version",
+                        "q.status AS status",
+                        "q.totalAmount AS \"totalAmount\"",
+                        "q.createdAt AS \"createdAt\"",
+                        "opp.id AS \"opportunityId\"",
+                        "opp.opportunityCode AS \"opportunityCode\"",
+                        "opp.name AS \"opportunityName\"",
+                        "COALESCE(cust.name, opp.leadName) AS \"customerName\"",
+                        "COALESCE(creator.fullName, oppCreator.fullName) AS \"createdByName\""
+                    ])
+                    .where("(q.status = :pendingApproval OR (q.status = :draftStatus AND opp.status = :quoteApprovalStatus))", {
+                        pendingApproval: QuotationStatus.PENDING_APPROVAL,
+                        draftStatus: QuotationStatus.DRAFT,
+                        quoteApprovalStatus: OpportunityStatus.PENDING_QUOTE_APPROVAL
+                    });
+                if (projectId) {
+                    qb.innerJoin("opp.contracts", "contract")
+                      .innerJoin("contract.project", "project")
+                      .andWhere("project.id = :projectId", { projectId });
+                }
+                return qb.orderBy("q.createdAt", "DESC").limit(20).getRawMany<{
+                    id: string;
+                    version: number;
+                    status: QuotationStatus;
+                    totalAmount: string;
+                    createdAt: Date;
+                    opportunityId?: string;
+                    opportunityCode?: string;
+                    opportunityName?: string;
+                    customerName?: string;
+                    createdByName?: string;
+                }>();
+            })(),
+            (() => {
+                const qb = this.contractRepo.createQueryBuilder("c")
+                    .leftJoin("c.customer", "cust")
+                    .leftJoin("c.opportunity", "opp")
+                    .leftJoin("c.createdBy", "creator")
+                    .select([
+                        "c.id AS id",
+                        "c.name AS title",
+                        "c.status AS status",
+                        "c.sellingPrice AS \"totalAmount\"",
+                        "c.createdAt AS \"createdAt\"",
+                        "c.contractCode AS \"contractCode\"",
+                        "c.proposal_contract AS \"proposalUrl\"",
+                        "c.quotation_link AS \"quotationLink\"",
+                        "opp.id AS \"opportunityId\"",
+                        "opp.name AS \"opportunityName\"",
+                        "cust.name AS \"customerName\"",
+                        "creator.fullName AS \"createdByName\""
+                    ])
+                    .where("c.status = :contractStatus", { contractStatus: ContractStatus.PROPOSAL_UPLOADED });
+                if (projectId) {
+                    qb.innerJoin("c.project", "project")
+                      .andWhere("project.id = :projectId", { projectId });
+                }
+                return qb.orderBy("c.createdAt", "DESC").limit(20).getRawMany<{
+                    id: string;
+                    title: string;
+                    status: ContractStatus;
+                    totalAmount: string;
+                    createdAt: Date;
+                    contractCode: string;
+                    proposalUrl?: string;
+                    quotationLink?: string;
+                    opportunityId?: string;
+                    opportunityName?: string;
+                    customerName?: string;
+                    createdByName?: string;
+                }>();
+            })()
         ]);
+
+        const quotationApprovalCount = pendingQuotations.length < 20
+            ? pendingQuotations.length
+            : await this.quotationRepo.count({ where: quotationWhere });
+        const contractApprovalCount = pendingContracts.length < 20
+            ? pendingContracts.length
+            : await this.contractRepo.count({ where: contractWhere });
+
+        const totalCustomers = parseInt(metricsRow?.totalCustomers || "0", 10);
+        const newCustomers = parseInt(metricsRow?.newCustomers || "0", 10);
+        const totalRevenue = parseFloat(metricsRow?.totalRevenue || "0");
+        const totalDebt = parseFloat(metricsRow?.totalDebt || "0");
 
         const approvalQueue = {
             quotations: pendingQuotations.map(q => ({
@@ -659,32 +830,30 @@ export class DashboardService {
                 type: "QUOTATION",
                 title: `Báo giá lần ${q.version}`,
                 status: q.status,
-                totalAmount: q.totalAmount,
+                totalAmount: parseFloat(String(q.totalAmount || "0")),
                 createdAt: q.createdAt,
-                opportunityId: q.opportunity?.id,
-                opportunityCode: q.opportunity?.opportunityCode,
-                opportunityName: q.opportunity?.name,
-                customerName: q.opportunity?.customer?.name || q.opportunity?.leadName,
-                createdByName: q.createdBy?.fullName || q.opportunity?.createdBy?.fullName
+                opportunityId: q.opportunityId,
+                opportunityCode: q.opportunityCode,
+                opportunityName: q.opportunityName,
+                customerName: q.customerName,
+                createdByName: q.createdByName
             })),
             contracts: pendingContracts.map(c => ({
                 id: c.id,
                 type: "CONTRACT",
-                title: c.name,
+                title: c.title,
                 status: c.status,
-                totalAmount: c.sellingPrice,
+                totalAmount: parseFloat(String(c.totalAmount || "0")),
                 createdAt: c.createdAt,
                 contractCode: c.contractCode,
-                opportunityId: c.opportunity?.id,
-                opportunityName: c.opportunity?.name,
-                customerName: c.customer?.name,
-                createdByName: c.createdBy?.fullName,
-                proposalUrl: c.proposal_contract,
-                quotationLink: c.quotation_link
+                opportunityId: c.opportunityId,
+                opportunityName: c.opportunityName,
+                customerName: c.customerName,
+                createdByName: c.createdByName,
+                proposalUrl: c.proposalUrl,
+                quotationLink: c.quotationLink
             }))
         };
-
-        const currentProjects = await this.getCurrentProjectProgress(projectId);
 
         return {
             totalCustomers,
@@ -692,43 +861,8 @@ export class DashboardService {
             totalRevenue,
             totalDebt,
             approvalQueue,
-            currentProjects,
+            currentProjects: [] as any[],
             pendingApprovalCount: quotationApprovalCount + contractApprovalCount
         };
-    }
-
-    private async getCurrentProjectProgress(projectId?: string) {
-        const projects = await this.projectRepo.find({
-            where: {
-                ...(projectId && { id: projectId }),
-                status: In([
-                    ProjectStatus.PENDING_CONFIRMATION,
-                    ProjectStatus.CONFIRMED,
-                    ProjectStatus.IN_PROGRESS
-                ])
-            },
-            relations: ["contract", "contract.customer", "contract.services", "team", "team.teamLead"],
-            order: { createdAt: "DESC" }
-        });
-
-        return projects.map(project => {
-            const services = project.contract?.services || [];
-            const serviceCount = services.length;
-            const completedServiceCount = services.filter(s => s.status === ContractServiceStatus.COMPLETED).length;
-
-            return {
-                id: project.id,
-                name: project.name,
-                status: project.status,
-                customerName: project.contract?.customer?.name,
-                teamName: project.team?.name,
-                teamLeadName: project.team?.teamLead?.fullName,
-                plannedStartDate: project.plannedStartDate,
-                plannedEndDate: project.plannedEndDate,
-                serviceCount,
-                completedServiceCount,
-                progress: serviceCount > 0 ? Math.round((completedServiceCount / serviceCount) * 100) : 0
-            };
-        });
     }
 }
