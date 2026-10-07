@@ -43,7 +43,9 @@ export class TaskResultCheckController {
             const kind = ["QC", "BOTH"].includes(req.body.kind) ? req.body.kind : "SPELL";
             const whitelist = Array.isArray(req.body.whitelist) ? req.body.whitelist : [];
             const scope = req.body.scope && typeof req.body.scope === "object" ? req.body.scope : null;
-            const result = await this.service.rerunCheck(req.params.taskId as string, kind, whitelist, user, scope);
+            const reviewerNote = typeof req.body.reviewerNote === "string" ? req.body.reviewerNote.trim().slice(0, 1000) : "";
+            const qcOptions = { reviewerNote: reviewerNote || undefined, refresh: req.body.refresh === true };
+            const result = await this.service.rerunCheck(req.params.taskId as string, kind, whitelist, user, scope, qcOptions);
             res.status(200).json(result);
         } catch (error: any) {
             res.status(error.statusCode || 500).json({ message: error.message });

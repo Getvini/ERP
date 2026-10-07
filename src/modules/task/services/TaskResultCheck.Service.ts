@@ -50,6 +50,8 @@ type CheckParams = {
 };
 
 type RerunKind = "SPELL" | "QC" | "BOTH";
+// Tùy chọn của người duyệt khi kiểm tra lại QC: ghi chú gửi cho AI, và bỏ qua cache để model xem lại cả phần không đổi.
+export type QcRunOptions = { reviewerNote?: string; refresh?: boolean };
 
 type ScannedScenario = NonNullable<TaskResultChecks["scannedScenarios"]>[number];
 
@@ -247,7 +249,8 @@ export class TaskResultCheckService extends TaskBaseService {
         scope: ScanScope,
         projectId: string | undefined,
         actor: Actor | undefined,
-        partial: boolean
+        partial: boolean,
+        qcOptions?: QcRunOptions
     ) {
         let persistChain: Promise<void> = Promise.resolve();
         const onBatches = (batches: QcBatchInfo[]) => {
@@ -257,7 +260,7 @@ export class TaskResultCheckService extends TaskBaseService {
         };
         try {
             if (!partial) await this.repository.update(recordId, { qcBatches: null });
-            const qc = await this.executeQcCheck(buffer, fileName, sheetNames, scope, projectId, actor, onBatches);
+            const qc = await this.executeQcCheck(buffer, fileName, sheetNames, scope, projectId, actor, onBatches, qcOptions);
             await persistChain;
             console.log(`[RESULT_CHECK_DEBUG] executeQcCheck OK recordId=${recordId} projectId=${projectId} requested_scenarioIds=${JSON.stringify(scope.scenarioIds)} regions=${scope.regions.length} qcMismatches=${qc.qcMismatches?.length ?? 0} skipped=${qc.qcSkippedReason ?? "no"}`);
             await this.applyQcResult(recordId, qc, partial ? scope : null);
@@ -392,10 +395,11 @@ export class TaskResultCheckService extends TaskBaseService {
         scope: ScanScope,
         projectId?: string,
         actor?: Actor,
-        onBatches?: (batches: QcBatchInfo[]) => void
+        onBatches?: (batches: QcBatchInfo[]) => void,
+        qcOptions?: QcRunOptions
     ) {
         let qcMismatches: Record<string, any>[] = [];
-        let qcModels: { verify: string } | null = null;
+        let qcModels: TaskResultChecks["qcModels"] = null;
         let qcSkippedReason: string | null = null;
         let qcBatches: QcBatchInfo[] = [];
         if (!projectId) {
@@ -410,10 +414,14 @@ export class TaskResultCheckService extends TaskBaseService {
                     scenarioIds: scope.scenarioIds,
                     regions: scope.regions,
                     actor: actor as any,
-                    onBatches
+                    onBatches,
+                    reviewerNote: qcOptions?.reviewerNote,
+                    refresh: qcOptions?.refresh
                 });
                 qcMismatches = qcResult?.mismatch_report?.mismatches || [];
-                qcModels = qcResult?.models || null;
+                qcModels = qcResult?.models
+                    ? { ...qcResult.models, reviewerNote: qcOptions?.reviewerNote ?? null, stats: qcResult.stats ?? null }
+                    : null;
                 qcBatches = qcResult?.batches || [];
             } catch (err: any) {
                 if (err?.statusCode === 400) {
@@ -598,7 +606,8 @@ export class TaskResultCheckService extends TaskBaseService {
         kind: RerunKind,
         whitelist: string[],
         actor?: Actor,
-        rawScope?: { scenarioIds?: unknown; regions?: unknown } | null
+        rawScope?: { scenarioIds?: unknown; regions?: unknown } | null,
+        qcOptions?: QcRunOptions
     ) {
         const task = await this.getOne(taskId);
         this.assertCanReview(task, actor);
@@ -649,7 +658,7 @@ export class TaskResultCheckService extends TaskBaseService {
         taskResultCheckEmitter.emit(TASK_RESULT_CHECK_EVENTS.UPDATED, { taskId });
 
         const refreshed = { ...record, ...update } as TaskResultChecks;
-        void this.runRerun(record.id, task, refreshed, kinds, whitelist, partialScope, actor);
+        void this.runRerun(record.id, task, refreshed, kinds, whitelist, partialScope, actor, kinds.includes("QC") ? qcOptions : undefined);
 
         return { status: TaskResultCheckStatus.RUNNING };
     }
@@ -661,7 +670,8 @@ export class TaskResultCheckService extends TaskBaseService {
         kinds: ("SPELL" | "QC")[],
         whitelist: string[],
         partialScope: ScanScope | null,
-        actor?: Actor
+        actor?: Actor,
+        qcOptions?: QcRunOptions
     ) {
         let buffer: Buffer;
         try {
@@ -693,7 +703,7 @@ export class TaskResultCheckService extends TaskBaseService {
             jobs.push(this.runSpellCheck(recordId, task.id, buffer, fileName, sheetNames, mergedWhitelist, scope, displayMultiSheet, Boolean(partialScope)));
         }
         if (kinds.includes("QC")) {
-            jobs.push(this.runQcCheck(recordId, task.id, buffer, fileName, sheetNames, scope, task.project?.id, actor, Boolean(partialScope)));
+            jobs.push(this.runQcCheck(recordId, task.id, buffer, fileName, sheetNames, scope, task.project?.id, actor, Boolean(partialScope), qcOptions));
         }
         await Promise.all(jobs);
     }

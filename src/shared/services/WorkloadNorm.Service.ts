@@ -21,8 +21,10 @@ function httpError(message: string, statusCode: number) {
 }
 
 export class WorkloadNormService {
-    static readonly DEFAULT_MONTHLY_NORM = 2500;
-    static readonly DAYS_PER_MONTH = 30;
+    // Tiêu chuẩn từ 10/2026: 22.000 Vinicoin/tháng và 800 Vinicoin/ngày.
+    // 22.000 / 800 = 27,5 nên số ngày chuẩn/tháng là 27,5 để định mức ngày luôn khớp 800 khi tháng = 22.000.
+    static readonly DEFAULT_MONTHLY_NORM = 22000;
+    static readonly DAYS_PER_MONTH = 27.5;
     static readonly ACTIVE_WORKLOAD_STATUSES = [
         TaskStatus.PENDING,
         TaskStatus.NOT_STARTED,

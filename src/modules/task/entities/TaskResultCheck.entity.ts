@@ -76,7 +76,11 @@ export class TaskResultChecks extends BaseEntity {
     scannedScenarios: { id: string; sheet: string; scenarioLabel: string; startRow: number | null; endRow: number | null; colStart?: number | null; colWidth?: number | null }[] | null;
 
     @Column({ type: "simple-json", nullable: true })
-    qcModels: { verify: string } | null;
+    qcModels: {
+        verify: string;
+        reviewerNote?: string | null;
+        stats?: { total_blocks: number; reused_blocks: number; checked_blocks: number } | null;
+    } | null;
 
     @Column({ type: "simple-json", nullable: true })
     qcBatches: QcBatchInfo[] | null;

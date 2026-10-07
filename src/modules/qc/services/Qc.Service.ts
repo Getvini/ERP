@@ -133,6 +133,8 @@ export class QcService {
         regions?: ScanRegion[];
         actor?: Actor;
         onBatches?: (batches: QcBatchInfo[]) => void;
+        reviewerNote?: string;
+        refresh?: boolean;
     }) {
         const productInfo = await this.getApprovedProductInfo(params.projectId, params.actor);
         const aiProductInfo = toAiProductInfo(productInfo);
@@ -168,6 +170,8 @@ export class QcService {
                 formData.append("verify_model", qcConfig.verifyModel);
             }
             formData.append("reasoning_effort", qcConfig.reasoningEffort);
+            if (params.reviewerNote) formData.append("reviewer_note", params.reviewerNote);
+            if (params.refresh) formData.append("refresh", "true");
             formData.append("max_scenarios_per_batch", String(qcConfig.maxBatch));
             formData.append("context_window", String(qcConfig.maxContext));
             if (sheetScenarioIds) {
@@ -193,8 +197,18 @@ export class QcService {
             contentBlocks[sheetName] = data?.content_blocks;
         }
 
+        const stats = sheetResults.reduce(
+            (acc, { data }) => ({
+                total_blocks: acc.total_blocks + (data?.stats?.total_blocks ?? 0),
+                reused_blocks: acc.reused_blocks + (data?.stats?.reused_blocks ?? 0),
+                checked_blocks: acc.checked_blocks + (data?.stats?.checked_blocks ?? 0),
+            }),
+            { total_blocks: 0, reused_blocks: 0, checked_blocks: 0 }
+        );
+
         return {
             sheets: sheetNames,
+            stats,
             content_blocks: contentBlocks,
             batches: flattenBatches(),
             mismatch_report: { mismatches },
