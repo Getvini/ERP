@@ -16,7 +16,7 @@ import { SecurityService } from "../../../shared/services/Security.Service";
 import { ContractServices, ContractServiceStatus } from "../../contract/entities/ContractService.entity";
 import { Violations } from "../entities/Violation.entity";
 import { taskEmitter, TASK_EVENTS } from "../events/TaskEmitter";
-import { UserRole } from "../../account/entities/Account.entity";
+import { isProjectManagementRole, UserRole } from "../../account/entities/Account.entity";
 import { TaskResultCheckService } from "./TaskResultCheck.Service";
 import { assertSubtasksCompleted } from "../helpers/SubtaskCompletion.helper";
 import { assertSubtaskPlanApproved } from "../helpers/SubtaskPlanApproval.helper";
@@ -264,9 +264,9 @@ export class TaskResultService extends TaskBaseService {
             const isOpportunityDemo = Boolean(task.opportunityId && task.opportunityServiceJob?.isBriefVideo);
             const isDemoSalesOwner = [UserRole.BD, UserRole.ADMIN_SALE].includes(currentUser?.role as UserRole) &&
                 task.opportunity?.createdBy?.id === currentUserId;
-            const isDemoAdmin = [UserRole.ADMIN, UserRole.BOD].includes(currentUser?.role as UserRole);
+            const isDemoManager = isProjectManagementRole(currentUser?.role);
             const canRequestRework = isOpportunityDemo
-                ? isDemoSalesOwner || isDemoAdmin
+                ? isDemoSalesOwner || isDemoManager
                 : canDecideTaskOutcome(task, currentUserId);
             if (!canRequestRework) {
                 throw this.httpError("Bạn không có quyền yêu cầu làm lại công việc này", 403);
