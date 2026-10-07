@@ -10,10 +10,10 @@ export class VinicoinService {
      * Can be called within an existing transaction or use a new one.
      */
     async rewardForTask(
-        accountId: string, 
-        amount: number, 
-        taskId: string, 
-        serviceId: string, 
+        accountId: string,
+        amount: number,
+        taskId: string,
+        serviceId: string,
         manager?: EntityManager
     ) {
         const rewardAmount = Number(amount);
