@@ -9,7 +9,7 @@ export class StaffRoleWorkloadNorms {
     })
     role!: UserRole;
 
-    @Column({ name: "monthly_norm", type: "decimal", precision: 15, scale: 3, default: 2500 })
+    @Column({ name: "monthly_norm", type: "decimal", precision: 15, scale: 3, default: 22000 })
     monthlyNorm!: number;
 
     @Column({ name: "updated_by_id", type: "varchar", length: 26, nullable: true })
