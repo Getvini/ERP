@@ -6,6 +6,7 @@ import { ServiceJob } from "../../service/entities/ServiceJob.entity";
 import { In, ILike, Raw } from "typeorm";
 import { SecurityService } from "../../../shared/services/Security.Service";
 import { normalizeNickname } from "../../../shared/helpers/TaskNickname.helper";
+import { JobLevel, JobResponsibleRole } from "../../../shared/entities/Enums";
 
 export class JobService {
     private jobRepository = AppDataSource.getRepository(Jobs);
@@ -16,6 +17,17 @@ export class JobService {
         }
         if (data.isBriefVideo === true) {
             data.isQuotationItem = false;
+        }
+        if (Object.prototype.hasOwnProperty.call(data, "level")) {
+            if (!Object.values(JobLevel).includes(data.level)) {
+                throw new Error("Level của job không hợp lệ. Vui lòng chọn A, B hoặc C");
+            }
+        }
+        if (Object.prototype.hasOwnProperty.call(data, "responsibleRole")) {
+            if (data.responsibleRole === "") data.responsibleRole = null;
+            if (data.responsibleRole !== null && data.responsibleRole !== undefined && !Object.values(JobResponsibleRole).includes(data.responsibleRole)) {
+                throw new Error("Vai trò phụ trách job không hợp lệ");
+            }
         }
         return data;
     }

@@ -57,6 +57,23 @@ export enum JobCategory {
     KHAC = "KHAC"
 }
 
+export enum JobLevel {
+    A = "A",
+    B = "B",
+    C = "C"
+}
+
+export enum JobResponsibleRole {
+    CONTENT_CREATOR = "CONTENT_CREATOR",
+    EDITOR = "EDITOR",
+    DESIGNER = "DESIGNER",
+    CAMERAMAN = "CAMERAMAN",
+    ACCOUNT = "ACCOUNT",
+    VIDEO_EDITOR = "VIDEO_EDITOR",
+    SOCIAL_MEDIA_MANAGER = "SOCIAL_MEDIA_MANAGER",
+    PROJECT_MANAGER = "PROJECT_MANAGER"
+}
+
 export enum ViolationType {
     LATE_SUBMISSION = "LATE_SUBMISSION",
     LATE_UNFINISHED = "LATE_UNFINISHED",
