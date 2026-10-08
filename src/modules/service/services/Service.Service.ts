@@ -13,7 +13,35 @@ export class ServiceService {
         if (typeof data.code === "string") {
             data.code = data.code.trim();
         }
+        if (typeof data.name === "string") {
+            data.name = data.name.trim();
+        }
         return data;
+    }
+
+    private generateCodeFromName(name: string) {
+        const words = name
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/đ/g, "d")
+            .replace(/Đ/g, "D")
+            .match(/[a-zA-Z0-9]+/g);
+
+        const code = words?.map((word) => word[0]).join("").toUpperCase();
+        return code || "DV";
+    }
+
+    private async generateUniqueCodeFromName(name: string) {
+        const baseCode = this.generateCodeFromName(name);
+        let code = baseCode;
+        let suffix = 2;
+
+        while (await this.findByCode(code)) {
+            code = `${baseCode}${suffix}`;
+            suffix += 1;
+        }
+
+        return code;
     }
 
     private async findByCode(code: string) {
@@ -94,10 +122,10 @@ export class ServiceService {
         const { jobIds, outputJobIds, ...serviceData } = data;
         this.normalizeServicePayload(serviceData);
 
-        if (serviceData.code) {
-            const existingService = await this.findByCode(serviceData.code);
-            if (existingService) throw new Error("Mã dịch vụ đã tồn tại");
+        if (!serviceData.name) {
+            throw new Error("Tên dịch vụ là bắt buộc");
         }
+        serviceData.code = await this.generateUniqueCodeFromName(serviceData.name);
 
         const service = this.serviceRepository.create(SecurityService.withTenant(serviceData) as Partial<Services>);
         const savedService = (await this.serviceRepository.save(service)) as unknown as Services;
