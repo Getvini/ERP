@@ -1,5 +1,21 @@
-import { IsString, IsNotEmpty, IsOptional, IsEmail, IsEnum, IsBoolean, IsDateString } from "class-validator";
+import { IsString, IsNotEmpty, IsOptional, IsEmail, IsEnum, IsBoolean, IsDateString, IsArray, Matches, ValidateNested } from "class-validator";
+import { Type } from "class-transformer";
 import { UserRole } from "../../account/entities/Account.entity";
+
+export class IdCardDTO {
+    @IsString()
+    @IsOptional()
+    frontUrl?: string;
+
+    @IsString()
+    @IsOptional()
+    backUrl?: string;
+
+    @IsString()
+    @Matches(/^([0-9]{9}|[0-9]{12})$/, { message: "Số CCCD / CMND phải gồm đúng 9 hoặc 12 chữ số" })
+    @IsOptional()
+    idNumber?: string;
+}
 
 export class CreateUserDTO {
     @IsString()
@@ -13,10 +29,6 @@ export class CreateUserDTO {
     @IsString()
     @IsNotEmpty({ message: "Họ tên không được để trống" })
     fullName: string;
-
-    // @IsEmail({}, { message: "Email không hợp lệ" })
-    // @IsOptional()
-    // email?: string;
 
     @IsString()
     @IsOptional()
@@ -63,4 +75,22 @@ export class UpdateUserDTO {
     @IsBoolean()
     @IsOptional()
     isLocked?: boolean;
+
+    @IsString()
+    @IsOptional()
+    avatarUrl?: string;
+
+    @IsString()
+    @IsOptional()
+    portfolioUrl?: string;
+
+    @IsArray()
+    @IsString({ each: true })
+    @IsOptional()
+    hobbies?: string[];
+
+    @ValidateNested()
+    @Type(() => IdCardDTO)
+    @IsOptional()
+    idCard?: IdCardDTO | null;
 }

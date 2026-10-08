@@ -1,6 +1,6 @@
 import { Users } from "../entities/User.entity";
 import { Accounts, UserRole } from "../../account/entities/Account.entity";
-import { encrypt } from "../../../shared/helpers/helpers";
+import { encrypt, CryptoHelper } from "../../../shared/helpers/helpers";
 import { validateUserData } from "../validations/User.Validation";
 import { AppDataSource } from "../../../data-source";
 import { RedisService } from "../../../shared/services/Redis.Service";
@@ -20,7 +20,7 @@ export class UserService {
         return key;
     }
 
-    private canViewLaborContract(user: Users | any, viewer?: UserViewer) {
+    private canViewSensitiveData(user: Users | any, viewer?: UserViewer) {
         if (!viewer) return false;
         if (LABOR_CONTRACT_MANAGER_ROLES.includes(viewer.role as UserRole)) return true;
         return Boolean(viewer.userId && viewer.userId === user.id);
@@ -32,11 +32,20 @@ export class UserService {
         }
     }
 
-    private sanitizeLaborContract(user: any, viewer?: UserViewer) {
+    private sanitizeUser(user: any, viewer?: UserViewer) {
+        const canView = this.canViewSensitiveData(user, viewer);
+        let idCard = canView ? (user.idCard || null) : undefined;
+        if (idCard) {
+            idCard = {
+                idNumber: idCard.idNumber ? CryptoHelper.decryptAES(idCard.idNumber) : null,
+            };
+        }
+
         return {
             ...user,
             account: user.accounts?.[0] || user.account,
-            laborContract: this.canViewLaborContract(user, viewer) ? (user.laborContract || []) : []
+            laborContract: canView ? (user.laborContract || []) : [],
+            idCard,
         };
     }
 
@@ -67,13 +76,19 @@ export class UserService {
                     phoneNumber: true,
                     birthday: true,
                     isLocked: true,
+                    avatarUrl: true,
+                    portfolioUrl: true,
+                    hobbies: true,
+                    idCard: true,
                     laborContract: true,
                     accounts: {
                         id: true,
                         username: true,
                         email: true,
                         role: true,
-                        isActive: true
+                        isActive: true,
+                        vinicoin: true,
+                        vinicoinTotal: true
                     },
                     tasks: {
                         id: true,
@@ -85,7 +100,7 @@ export class UserService {
             });
             const workloads = await this.workloadService.getWorkloadsForUsers(users.map(user => user.id), filters.month, filters.year);
             return users.map((user: any) => ({
-                ...this.sanitizeLaborContract(user, viewer),
+                ...this.sanitizeUser(user, viewer),
                 workload: workloads.get(user.id) || null
             }));
         });
@@ -102,13 +117,19 @@ export class UserService {
                     phoneNumber: true,
                     birthday: true,
                     isLocked: true,
+                    avatarUrl: true,
+                    portfolioUrl: true,
+                    hobbies: true,
+                    idCard: true,
                     laborContract: true,
                     accounts: {
                         id: true,
                         username: true,
                         email: true,
                         role: true,
-                        isActive: true
+                        isActive: true,
+                        vinicoin: true,
+                        vinicoinTotal: true
                     },
                     tasks: {
                         id: true,
@@ -121,7 +142,7 @@ export class UserService {
         });
 
         if (!user) throw new Error("Không tìm thấy người dùng");
-        return this.sanitizeLaborContract(user as any, viewer);
+        return this.sanitizeUser(user as any, viewer);
     }
 
     async create(data: any) {
@@ -172,16 +193,29 @@ export class UserService {
         return { message: "Tạo người dùng thành công" };
     }
 
-    async update(id: string, data: any) {
+    async update(id: string, data: any, viewer?: UserViewer) {
         validateUserData(data);
         const user = await this.getUserForMutation(id);
-        const { fullName, phoneNumber, birthday, email, role, isActive, username, isLocked } = data;
+        const { fullName, phoneNumber, birthday, email, role, isActive, username, isLocked, avatarUrl, portfolioUrl, hobbies, idCard } = data;
 
         if (fullName !== undefined) user.fullName = fullName;
         if (phoneNumber !== undefined) user.phoneNumber = phoneNumber;
         if (birthday !== undefined) user.birthday = birthday || null;
         if (isLocked !== undefined) user.isLocked = isLocked;
         if (data.laborContract !== undefined) user.laborContract = data.laborContract;
+        if (avatarUrl !== undefined) user.avatarUrl = avatarUrl;
+        if (portfolioUrl !== undefined) user.portfolioUrl = portfolioUrl || null;
+        if (hobbies !== undefined) user.hobbies = Array.isArray(hobbies) ? hobbies : null;
+        if (idCard !== undefined) {
+            if (idCard && idCard.idNumber) {
+                const cleanId = String(idCard.idNumber).trim();
+                user.idCard = {
+                    idNumber: CryptoHelper.encryptAES(cleanId),
+                };
+            } else {
+                user.idCard = null;
+            }
+        }
 
         const account = (user as any).account;
         if (account) {
@@ -201,7 +235,7 @@ export class UserService {
 
         userEmitter.emit(USER_EVENTS.UPDATED, savedUser);
 
-        return savedUser;
+        return this.sanitizeUser(savedUser, viewer);
     }
 
     async updateLaborContracts(id: string, laborContract: any[], viewer?: UserViewer) {
@@ -216,7 +250,7 @@ export class UserService {
 
         userEmitter.emit(USER_EVENTS.UPDATED, savedUser);
 
-        return this.sanitizeLaborContract(savedUser, viewer);
+        return this.sanitizeUser(savedUser, viewer);
     }
 
     async delete(id: string) {

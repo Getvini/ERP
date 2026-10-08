@@ -48,7 +48,7 @@ export class UserController {
                 data.laborContract = [];
             }
 
-            const result = await this.userService.update(req.params.id as string, data);
+            const result = await this.userService.update(req.params.id as string, data, (req as any).user);
             res.status(200).json(result);
         } catch (error: any) {
             res.status(400).json({ message: error.message });
