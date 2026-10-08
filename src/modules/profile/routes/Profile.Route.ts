@@ -11,6 +11,5 @@ router.use(writeRateLimitMiddleware);
 
 router.get("/", profileController.getMe);
 router.patch("/", profileController.updateMe);
-router.get("/id-card/:side", profileController.getIdCardPhoto);
 
 export default router;

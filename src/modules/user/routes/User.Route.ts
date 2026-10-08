@@ -20,7 +20,6 @@ const upload = multer({
 
 router.get("/", userController.getAll);
 router.get("/:id", userController.getOne);
-router.get("/:id/id-card/:side", userController.getIdCardPhoto);
 
 // Only BOD, ADMIN (and ADMIN_SALE) can manage users (Create, Update, Delete)
 router.post("/", roleMiddleware(["BOD", "ADMIN"]), validationMiddleware(CreateUserDTO), userController.create);

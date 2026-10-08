@@ -37,9 +37,6 @@ export class UserService {
         let idCard = canView ? (user.idCard || null) : undefined;
         if (idCard) {
             idCard = {
-                ...idCard,
-                frontUrl: idCard.frontUrl ? `/api/users/${user.id}/id-card/front` : null,
-                backUrl: idCard.backUrl ? `/api/users/${user.id}/id-card/back` : null,
                 idNumber: idCard.idNumber ? CryptoHelper.decryptAES(idCard.idNumber) : null,
             };
         }
@@ -50,16 +47,6 @@ export class UserService {
             laborContract: canView ? (user.laborContract || []) : [],
             idCard,
         };
-    }
-
-    async getIdCardPhotoUrl(id: string, side: 'front' | 'back', viewer?: UserViewer): Promise<string | null> {
-        const user = await this.userRepository.findOne({ where: { id } });
-        if (!user) throw new Error("Không tìm thấy người dùng");
-        if (!this.canViewSensitiveData(user, viewer)) {
-            throw new Error("Bạn không có quyền truy cập ảnh CCCD này");
-        }
-        if (!user.idCard) return null;
-        return side === 'front' ? (user.idCard.frontUrl || null) : (user.idCard.backUrl || null);
     }
 
     private async getUserForMutation(id: string) {
@@ -220,24 +207,11 @@ export class UserService {
         if (portfolioUrl !== undefined) user.portfolioUrl = portfolioUrl || null;
         if (hobbies !== undefined) user.hobbies = Array.isArray(hobbies) ? hobbies : null;
         if (idCard !== undefined) {
-            if (idCard) {
-                const existingIdCard = user.idCard || {};
-                const newIdCard = { ...idCard };
-
-                // Giữ lại URL ảnh gốc nếu client gửi lại URL proxy
-                if (newIdCard.frontUrl && (newIdCard.frontUrl.includes('/api/me/id-card') || newIdCard.frontUrl.includes('/api/users/'))) {
-                    newIdCard.frontUrl = existingIdCard.frontUrl || newIdCard.frontUrl;
-                }
-                if (newIdCard.backUrl && (newIdCard.backUrl.includes('/api/me/id-card') || newIdCard.backUrl.includes('/api/users/'))) {
-                    newIdCard.backUrl = existingIdCard.backUrl || newIdCard.backUrl;
-                }
-
-                if (newIdCard.idNumber) {
-                    const cleanId = String(newIdCard.idNumber).trim();
-                    newIdCard.idNumber = CryptoHelper.encryptAES(cleanId);
-                }
-
-                user.idCard = newIdCard;
+            if (idCard && idCard.idNumber) {
+                const cleanId = String(idCard.idNumber).trim();
+                user.idCard = {
+                    idNumber: CryptoHelper.encryptAES(cleanId),
+                };
             } else {
                 user.idCard = null;
             }

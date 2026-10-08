@@ -20,9 +20,6 @@ export class ProfileService {
         let idCard = user?.idCard;
         if (idCard) {
             idCard = {
-                ...idCard,
-                frontUrl: idCard.frontUrl ? "/api/me/id-card/front" : null,
-                backUrl: idCard.backUrl ? "/api/me/id-card/back" : null,
                 idNumber: idCard.idNumber ? CryptoHelper.decryptAES(idCard.idNumber) : null,
             };
         }
@@ -44,15 +41,6 @@ export class ProfileService {
             vinicoinTotal: account.vinicoinTotal,
             vinicoinWithdrawn: account.vinicoinWithdrawn
         };
-    }
-
-    async getIdCardPhotoUrl(accountId: string, side: "front" | "back"): Promise<string | null> {
-        const account = await this.accountRepository.findOne({
-            where: { id: accountId },
-            relations: ["user"]
-        });
-        if (!account?.user?.idCard) return null;
-        return side === "front" ? (account.user.idCard.frontUrl || null) : (account.user.idCard.backUrl || null);
     }
 
     async updateProfile(accountId: string, data: any) {
@@ -89,27 +77,14 @@ export class ProfileService {
                 if (portfolioUrl !== undefined) account.user.portfolioUrl = portfolioUrl || null;
                 if (hobbies !== undefined) account.user.hobbies = Array.isArray(hobbies) ? hobbies : null;
                 if (idCard !== undefined) {
-                    if (idCard) {
-                        const existingIdCard = account.user.idCard || {};
-                        const newIdCard = { ...idCard };
-
-                        // Giữ lại URL ảnh gốc nếu client gửi lại URL proxy
-                        if (newIdCard.frontUrl && (newIdCard.frontUrl.includes('/api/me/id-card') || newIdCard.frontUrl.includes('/api/users/'))) {
-                            newIdCard.frontUrl = existingIdCard.frontUrl || newIdCard.frontUrl;
+                    if (idCard && idCard.idNumber) {
+                        const cleanId = String(idCard.idNumber).trim();
+                        if (!cleanId.startsWith("enc:") && !idCardRegex.test(cleanId)) {
+                            throw new Error("Số CCCD / CMND phải gồm đúng 9 hoặc 12 chữ số");
                         }
-                        if (newIdCard.backUrl && (newIdCard.backUrl.includes('/api/me/id-card') || newIdCard.backUrl.includes('/api/users/'))) {
-                            newIdCard.backUrl = existingIdCard.backUrl || newIdCard.backUrl;
-                        }
-
-                        if (newIdCard.idNumber) {
-                            const cleanId = String(newIdCard.idNumber).trim();
-                            if (!cleanId.startsWith("enc:") && !idCardRegex.test(cleanId)) {
-                                throw new Error("Số CCCD / CMND phải gồm đúng 9 hoặc 12 chữ số");
-                            }
-                            newIdCard.idNumber = CryptoHelper.encryptAES(cleanId);
-                        }
-
-                        account.user.idCard = newIdCard;
+                        account.user.idCard = {
+                            idNumber: CryptoHelper.encryptAES(cleanId),
+                        };
                     } else {
                         account.user.idCard = null;
                     }
