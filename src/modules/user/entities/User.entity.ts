@@ -21,6 +21,22 @@ export class Users extends BaseEntity {
     @Column({ default: false })
     isLocked: boolean
 
+    // 🖼️ Ảnh đại diện (Cloudinary URL)
+    @Column({ nullable: true })
+    avatarUrl: string | null
+
+    // 💼 Link Portfolio (1 link duy nhất)
+    @Column({ nullable: true })
+    portfolioUrl: string | null
+
+    // 🎯 Sở thích cá nhân (danh sách tags)
+    @Column({ type: "simple-json", nullable: true })
+    hobbies: string[] | null
+
+    // 🪪 CCCD 2 mặt (chỉ Admin/BOD/chính chủ được xem)
+    @Column({ type: "simple-json", nullable: true })
+    idCard: { frontUrl?: string; backUrl?: string; idNumber?: string } | null
+
     @OneToMany(() => Accounts, (account) => account.user)
     accounts: Accounts[]
 

@@ -20,10 +20,12 @@ const upload = multer({
 
 router.get("/", userController.getAll);
 router.get("/:id", userController.getOne);
+router.get("/:id/id-card/:side", userController.getIdCardPhoto);
 
-// Only BOD and ADMIN can manage users (Create, Update, Delete)
+// Only BOD, ADMIN (and ADMIN_SALE) can manage users (Create, Update, Delete)
 router.post("/", roleMiddleware(["BOD", "ADMIN"]), validationMiddleware(CreateUserDTO), userController.create);
-router.put("/:id", roleMiddleware(["BOD", "ADMIN"]), upload.array("laborContract", 3), validationMiddleware(UpdateUserDTO), userController.update);
+router.put("/:id", roleMiddleware(["BOD", "ADMIN", "ADMIN_SALE"]), upload.array("laborContract", 3), validationMiddleware(UpdateUserDTO), userController.update);
+router.patch("/:id", roleMiddleware(["BOD", "ADMIN", "ADMIN_SALE"]), upload.array("laborContract", 3), validationMiddleware(UpdateUserDTO), userController.update);
 router.patch("/:id/labor-contracts", roleMiddleware(["BOD", "ADMIN", "ADMIN_SALE"]), userController.updateLaborContracts);
 router.delete("/:id", roleMiddleware(["BOD", "ADMIN"]), userController.delete);
 

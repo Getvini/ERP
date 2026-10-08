@@ -48,7 +48,7 @@ export class UserController {
                 data.laborContract = [];
             }
 
-            const result = await this.userService.update(req.params.id as string, data);
+            const result = await this.userService.update(req.params.id as string, data, (req as any).user);
             res.status(200).json(result);
         } catch (error: any) {
             res.status(400).json({ message: error.message });
@@ -71,6 +71,26 @@ export class UserController {
             res.status(200).json(result);
         } catch (error: any) {
             res.status(400).json({ message: error.message });
+        }
+    }
+
+    getIdCardPhoto = async (req: Request, res: Response) => {
+        try {
+            const { id, side } = req.params;
+            if (side !== 'front' && side !== 'back') {
+                return res.status(400).json({ message: "Tham số mặt ảnh không hợp lệ (front hoặc back)" });
+            }
+            const imageUrl = await this.userService.getIdCardPhotoUrl(id as string, side as 'front' | 'back', (req as any).user);
+            if (!imageUrl) {
+                return res.status(404).json({ message: "Chưa có ảnh CCCD mặt này" });
+            }
+            const axios = require("axios");
+            const response = await axios.get(imageUrl, { responseType: "stream" });
+            res.setHeader("Content-Type", response.headers["content-type"] || "image/jpeg");
+            res.setHeader("Cache-Control", "private, no-cache, no-store, must-revalidate");
+            response.data.pipe(res);
+        } catch (error: any) {
+            res.status(403).json({ message: error.message });
         }
     }
 }
