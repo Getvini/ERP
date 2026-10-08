@@ -217,7 +217,11 @@ export class TaskAssignmentService extends TaskBaseService {
         return saved;
     }
 
-    async update(id: string, data: Partial<Tasks> & { assigneeId?: string }, currentUser?: { id: string, userId?: string; role?: string }) {
+    async update(
+        id: string,
+        data: Partial<Tasks> & { assigneeId?: string; deadlineChangeReason?: string },
+        currentUser?: { id: string, userId?: string; role?: string }
+    ) {
         const task = await this.getOne(id, currentUser);
         this.assertTaskNotLocked(task);
         await assertSubtaskPlanApproved(this.taskRepository, task, "cập nhật subtask");
@@ -234,7 +238,9 @@ export class TaskAssignmentService extends TaskBaseService {
         if (task.status === TaskStatus.NOT_STARTED && data.actualStartDate) {
             throw this.httpError("Ngày bắt đầu thực tế chỉ được ghi khi bắt đầu công việc", 409);
         }
-        if (data.plannedEndDate !== undefined) {
+        const isDeadlineChanged = data.plannedEndDate !== undefined &&
+            new Date(data.plannedEndDate as any).getTime() !== new Date(task.plannedEndDate as any).getTime();
+        if (isDeadlineChanged) {
             const hasMainPerformer = Boolean(task.assigneeId || task.vendor || task.performerType === PerformerType.VENDOR);
             if (!hasMainPerformer) {
                 throw this.httpError("Chỉ có thể sửa deadline sau khi công việc đã được phân công", 400);
@@ -244,6 +250,10 @@ export class TaskAssignmentService extends TaskBaseService {
                 this.isProjectOperatorFromTeam(task.project?.team, currentUser);
             if (!canEditDeadline) {
                 throw this.httpError("Chỉ Account hoặc PM của dự án mới được sửa deadline công việc", 403);
+            }
+
+            if (!data.deadlineChangeReason?.trim()) {
+                throw this.httpError("Vui lòng nhập lý do sửa deadline", 400);
             }
         }
 
@@ -280,6 +290,29 @@ export class TaskAssignmentService extends TaskBaseService {
                     select: ["id", "name", "plannedEndDate"]
                 });
                 assertParentDeadlineNotBeforeSubtasks(newDeadline, subtasks, task.name);
+            }
+            if (isDeadlineChanged) {
+                const actorUserId = await this.resolveActorUserId(currentUser);
+                const actorName = [
+                    task.assigner,
+                    task.assignee,
+                    task.helper,
+                    ...(task.project?.team?.members || []).map(member => member.user)
+                ].find(user => user?.id === actorUserId)?.fullName || null;
+                const previousHistory = Array.isArray(task.deadlineChangeHistory)
+                    ? task.deadlineChangeHistory
+                    : [];
+                task.deadlineChangeHistory = [
+                    ...previousHistory,
+                    {
+                        oldDeadline: task.plannedEndDate || null,
+                        newDeadline,
+                        reason: data.deadlineChangeReason!.trim(),
+                        changedAt: new Date(),
+                        changedById: actorUserId || null,
+                        changedByName: actorName
+                    }
+                ];
             }
             task.plannedEndDate = data.plannedEndDate;
         }

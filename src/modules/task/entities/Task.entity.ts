@@ -125,6 +125,16 @@ export class Tasks extends BaseEntity {
     @Column({ type: "timestamptz", nullable: true })
     plannedEndDate: Date;
 
+    @Column({ type: "json", nullable: true })
+    deadlineChangeHistory: {
+        oldDeadline: Date | string | null,
+        newDeadline: Date | string,
+        reason: string,
+        changedAt: Date | string,
+        changedById?: string | null,
+        changedByName?: string | null
+    }[] | null;
+
     @Column({ type: "timestamptz", nullable: true })
     actualStartDate: Date;
 
