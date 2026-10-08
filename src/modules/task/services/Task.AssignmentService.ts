@@ -246,10 +246,10 @@ export class TaskAssignmentService extends TaskBaseService {
                 throw this.httpError("Chỉ có thể sửa deadline sau khi công việc đã được phân công", 400);
             }
 
-            const canEditDeadline = isProjectManagementRole(currentUser?.role) ||
-                this.isProjectOperatorFromTeam(task.project?.team, currentUser);
+            const canEditDeadline = currentUser?.role === UserRole.ADMIN ||
+                this.isProjectLeadFromTeam(task.project?.team, currentUser);
             if (!canEditDeadline) {
-                throw this.httpError("Chỉ Account hoặc PM của dự án mới được sửa deadline công việc", 403);
+                throw this.httpError("Chỉ Account của dự án hoặc Admin mới được sửa deadline công việc", 403);
             }
 
             if (!data.deadlineChangeReason?.trim()) {
@@ -293,12 +293,16 @@ export class TaskAssignmentService extends TaskBaseService {
             }
             if (isDeadlineChanged) {
                 const actorUserId = await this.resolveActorUserId(currentUser);
-                const actorName = [
+                let actorName = [
                     task.assigner,
                     task.assignee,
                     task.helper,
                     ...(task.project?.team?.members || []).map(member => member.user)
                 ].find(user => user?.id === actorUserId)?.fullName || null;
+                if (!actorName && actorUserId) {
+                    const actorUser = await this.userRepository.findOneBy({ id: actorUserId });
+                    actorName = actorUser?.fullName || null;
+                }
                 const previousHistory = Array.isArray(task.deadlineChangeHistory)
                     ? task.deadlineChangeHistory
                     : [];
