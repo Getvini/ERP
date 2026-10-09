@@ -34,10 +34,12 @@ export class DashboardService {
         month?: number,
         year?: number,
         projectId?: string,
-        mode?: "personal" | "management"
+        mode?: "personal" | "management",
+        startMonth?: number,
+        endMonth?: number
     ) {
         const data: any = {};
-        const dateFilter = this.getDateFilter(month, year);
+        const dateFilter = this.getDateFilter(month, year, startMonth, endMonth);
         const scope = await this.scopeService.resolve(actor, requestedUserId, projectId, mode);
 
         const userId = scope.targetUserId;
@@ -57,10 +59,10 @@ export class DashboardService {
 
         const [staffWorkloads, adminMetrics] = await Promise.all([
             scope.canSelectMembers
-                ? this.workloadService.getAllStaffWorkloads(month, year)
+                ? this.workloadService.getAllStaffWorkloads(month, year, startMonth, endMonth)
                 : Promise.resolve(undefined),
             scope.type === DashboardScopeType.SYSTEM
-                ? this.getAdminMetrics(dateFilter, projectId, month, year)
+                ? this.getAdminMetrics(dateFilter, projectId, month, year, startMonth, endMonth)
                 : Promise.resolve(undefined)
         ]);
 
@@ -72,7 +74,7 @@ export class DashboardService {
         if (scope.type === DashboardScopeType.SYSTEM) {
             data.admin = adminMetrics;
             data.admin.staffWorkloads = staffWorkloads
-                ?? await this.workloadService.getAllStaffWorkloads(month, year);
+                ?? await this.workloadService.getAllStaffWorkloads(month, year, startMonth, endMonth);
         }
 
         // 2. Team Lead Data
@@ -547,7 +549,7 @@ export class DashboardService {
             }));
 
         const memberWorkload = staffWorkloads?.find(w => w.userId === userId)
-            ?? await this.workloadService.getWorkloadForUser(userId, month, year);
+            ?? await this.workloadService.getWorkloadForUser(userId, month, year, startMonth, endMonth);
 
         data.member = {
             vinicoin,
@@ -612,30 +614,39 @@ export class DashboardService {
         return data;
     }
 
-    private getDateRange(month?: number, year?: number): { start: Date; end: Date } | null {
-        if (!year && !month) return null;
+    private getDateRange(
+        month?: number,
+        year?: number,
+        startMonth?: number,
+        endMonth?: number
+    ): { start: Date; end: Date } | null {
+        const effectiveStart = startMonth || month;
+        const effectiveEnd = endMonth || month;
+
+        if (!year && !effectiveStart) return null;
 
         let start: Date;
         let end: Date;
 
-        if (year && month) {
-            start = new Date(year, month - 1, 1);
-            end = new Date(year, month, 0, 23, 59, 59, 999);
+        if (year && effectiveStart && effectiveEnd) {
+            start = new Date(year, effectiveStart - 1, 1);
+            end = new Date(year, effectiveEnd, 0, 23, 59, 59, 999);
         } else if (year) {
             start = new Date(year, 0, 1);
             end = new Date(year, 11, 31, 23, 59, 59, 999);
-        } else {
-            // Only month provided (unlikely from UI but for safety)
+        } else if (effectiveStart && effectiveEnd) {
             const currentYear = new Date().getFullYear();
-            start = new Date(currentYear, month! - 1, 1);
-            end = new Date(currentYear, month!, 0, 23, 59, 59, 999);
+            start = new Date(currentYear, effectiveStart - 1, 1);
+            end = new Date(currentYear, effectiveEnd, 0, 23, 59, 59, 999);
+        } else {
+            return null;
         }
 
         return { start, end };
     }
 
-    private getDateFilter(month?: number, year?: number) {
-        const range = this.getDateRange(month, year);
+    private getDateFilter(month?: number, year?: number, startMonth?: number, endMonth?: number) {
+        const range = this.getDateRange(month, year, startMonth, endMonth);
         return range ? Between(range.start, range.end) : null;
     }
 
@@ -651,11 +662,13 @@ export class DashboardService {
         dateFilter: any | null,
         projectId?: string,
         month?: number,
-        year?: number
+        year?: number,
+        startMonth?: number,
+        endMonth?: number
     ) {
         const thirtyDaysAgo = new Date();
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-        const dateRange = this.getDateRange(month, year);
+        const dateRange = this.getDateRange(month, year, startMonth, endMonth);
 
         // Build single combined query for scalar metrics (totalCustomers, newCustomers, totalRevenue, totalDebt)
         const params: any[] = [];

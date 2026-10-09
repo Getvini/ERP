@@ -29,13 +29,15 @@ export class WorkloadService {
     private userRepository = AppDataSource.getRepository(Users);
     private workloadNormService = new WorkloadNormService();
 
-    private getMonthRange(month?: number, year?: number) {
+    private getMonthRange(month?: number, year?: number, startMonth?: number, endMonth?: number) {
         const now = new Date();
         const targetYear = year || now.getFullYear();
-        const targetMonth = month || now.getMonth() + 1;
-        const start = new Date(targetYear, targetMonth - 1, 1);
-        const end = new Date(targetYear, targetMonth, 0, 23, 59, 59, 999);
-        return { start, end };
+        const effectiveStart = startMonth || month || now.getMonth() + 1;
+        const effectiveEnd = endMonth || month || now.getMonth() + 1;
+        const start = new Date(targetYear, effectiveStart - 1, 1);
+        const end = new Date(targetYear, effectiveEnd, 0, 23, 59, 59, 999);
+        const monthCount = Math.max(1, effectiveEnd - effectiveStart + 1);
+        return { start, end, monthCount };
     }
 
     private buildSummary(userId: string, monthlyNorm: number, pendingVinicoin = 0, taskCount = 0): WorkloadSummary {
@@ -61,7 +63,9 @@ export class WorkloadService {
     private async calculateWorkloadsForStaffUsers(
         staffUsers: { user: Users; role: UserRole }[],
         month?: number,
-        year?: number
+        year?: number,
+        startMonth?: number,
+        endMonth?: number
     ): Promise<Map<string, WorkloadSummary>> {
         const workloads = new Map<string, WorkloadSummary>();
         if (staffUsers.length === 0) return workloads;
@@ -70,12 +74,14 @@ export class WorkloadService {
         const normMap = await this.workloadNormService.getNormMap(staffUsers.map(item => item.role));
         const userRoleMap = new Map(staffUsers.map(item => [item.user.id, item.role]));
 
+        const { start, end, monthCount } = this.getMonthRange(month, year, startMonth, endMonth);
+
         staffUsers.forEach(({ user, role }) => {
-            const monthlyNorm = normMap.get(role)?.monthlyNorm || WorkloadNormService.DEFAULT_MONTHLY_NORM;
-            workloads.set(user.id, this.buildSummary(user.id, monthlyNorm));
+            const baseNorm = normMap.get(role)?.monthlyNorm || WorkloadNormService.DEFAULT_MONTHLY_NORM;
+            const periodNorm = baseNorm * monthCount;
+            workloads.set(user.id, this.buildSummary(user.id, periodNorm));
         });
 
-        const { start, end } = this.getMonthRange(month, year);
         const rows = await this.taskRepository
             .createQueryBuilder("task")
             .leftJoin("task.job", "job")
@@ -94,18 +100,19 @@ export class WorkloadService {
         rows.forEach(row => {
             const userId = row.userId;
             const role = userRoleMap.get(userId);
-            const monthlyNorm = role
+            const baseNorm = role
                 ? normMap.get(role)?.monthlyNorm || WorkloadNormService.DEFAULT_MONTHLY_NORM
                 : WorkloadNormService.DEFAULT_MONTHLY_NORM;
+            const periodNorm = baseNorm * monthCount;
             const pendingVinicoin = Number(row.pendingVinicoin || 0);
             const taskCount = Number(row.taskCount || 0);
-            workloads.set(userId, this.buildSummary(userId, monthlyNorm, pendingVinicoin, taskCount));
+            workloads.set(userId, this.buildSummary(userId, periodNorm, pendingVinicoin, taskCount));
         });
 
         return workloads;
     }
 
-    async getWorkloadsForUsers(userIds: string[], month?: number, year?: number) {
+    async getWorkloadsForUsers(userIds: string[], month?: number, year?: number, startMonth?: number, endMonth?: number) {
         const uniqueUserIds = Array.from(new Set(userIds.filter(Boolean)));
         if (uniqueUserIds.length === 0) return new Map<string, WorkloadSummary>();
 
@@ -121,15 +128,15 @@ export class WorkloadService {
             .map(user => ({ user, role: this.getStaffRole(user.accounts) }))
             .filter((item): item is { user: Users; role: UserRole } => Boolean(item.role));
 
-        return this.calculateWorkloadsForStaffUsers(staffUsers, month, year);
+        return this.calculateWorkloadsForStaffUsers(staffUsers, month, year, startMonth, endMonth);
     }
 
-    async getWorkloadForUser(userId: string, month?: number, year?: number) {
-        const workloads = await this.getWorkloadsForUsers([userId], month, year);
+    async getWorkloadForUser(userId: string, month?: number, year?: number, startMonth?: number, endMonth?: number) {
+        const workloads = await this.getWorkloadsForUsers([userId], month, year, startMonth, endMonth);
         return workloads.get(userId) || null;
     }
 
-    async getAllStaffWorkloads(month?: number, year?: number): Promise<StaffWorkloadSummary[]> {
+    async getAllStaffWorkloads(month?: number, year?: number, startMonth?: number, endMonth?: number): Promise<StaffWorkloadSummary[]> {
         const users = await this.userRepository.find({
             where: {
                 isLocked: false,
@@ -143,7 +150,7 @@ export class WorkloadService {
             .map(user => ({ user, role: this.getStaffRole(user.accounts) }))
             .filter((item): item is { user: Users; role: UserRole } => Boolean(item.role));
 
-        const workloads = await this.calculateWorkloadsForStaffUsers(staffUsers, month, year);
+        const workloads = await this.calculateWorkloadsForStaffUsers(staffUsers, month, year, startMonth, endMonth);
 
         return staffUsers.map(({ user, role }) => ({
             fullName: user.fullName,
