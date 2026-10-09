@@ -34,18 +34,11 @@ export class UserService {
 
     private sanitizeUser(user: any, viewer?: UserViewer) {
         const canView = this.canViewSensitiveData(user, viewer);
-        let idCard = canView ? (user.idCard || null) : undefined;
-        if (idCard) {
-            idCard = {
-                idNumber: idCard.idNumber ? CryptoHelper.decryptAES(idCard.idNumber) : null,
-            };
-        }
 
         return {
             ...user,
             account: user.accounts?.[0] || user.account,
             laborContract: canView ? (user.laborContract || []) : [],
-            idCard,
         };
     }
 
@@ -79,7 +72,6 @@ export class UserService {
                     avatarUrl: true,
                     portfolioUrl: true,
                     hobbies: true,
-                    idCard: true,
                     laborContract: true,
                     accounts: {
                         id: true,
@@ -120,7 +112,6 @@ export class UserService {
                     avatarUrl: true,
                     portfolioUrl: true,
                     hobbies: true,
-                    idCard: true,
                     laborContract: true,
                     accounts: {
                         id: true,
@@ -196,7 +187,7 @@ export class UserService {
     async update(id: string, data: any, viewer?: UserViewer) {
         validateUserData(data);
         const user = await this.getUserForMutation(id);
-        const { fullName, phoneNumber, birthday, email, role, isActive, username, isLocked, avatarUrl, portfolioUrl, hobbies, idCard } = data;
+        const { fullName, phoneNumber, birthday, email, role, isActive, username, isLocked, avatarUrl, portfolioUrl, hobbies } = data;
 
         if (fullName !== undefined) user.fullName = fullName;
         if (phoneNumber !== undefined) user.phoneNumber = phoneNumber;
@@ -206,16 +197,6 @@ export class UserService {
         if (avatarUrl !== undefined) user.avatarUrl = avatarUrl;
         if (portfolioUrl !== undefined) user.portfolioUrl = portfolioUrl || null;
         if (hobbies !== undefined) user.hobbies = Array.isArray(hobbies) ? hobbies : null;
-        if (idCard !== undefined) {
-            if (idCard && idCard.idNumber) {
-                const cleanId = String(idCard.idNumber).trim();
-                user.idCard = {
-                    idNumber: CryptoHelper.encryptAES(cleanId),
-                };
-            } else {
-                user.idCard = null;
-            }
-        }
 
         const account = (user as any).account;
         if (account) {

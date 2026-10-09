@@ -33,9 +33,6 @@ export class Users extends BaseEntity {
     @Column({ type: "simple-json", nullable: true })
     hobbies: string[] | null
 
-    // 🪪 Số CCCD mã hóa (chỉ Admin/BOD/chính chủ được xem)
-    @Column({ type: "simple-json", nullable: true })
-    idCard: { idNumber?: string } | null
 
     @OneToMany(() => Accounts, (account) => account.user)
     accounts: Accounts[]
