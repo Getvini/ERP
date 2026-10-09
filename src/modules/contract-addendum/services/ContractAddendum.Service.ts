@@ -186,6 +186,7 @@ export class ContractAddendumService {
                         job: d.job,
                         serviceId: d.service?.id,
                         sellingPrice: roundUnitSellingPrice(d.sellingPrice),
+                        budget: Number(d.budget || 0),
                         name: d.name || d.service?.name,
                         code: d.service?.code,
                         status: ContractServiceStatus.ACTIVE
@@ -207,6 +208,7 @@ export class ContractAddendumService {
                     service: serviceDef,
                     serviceId: serviceDef?.id,
                     sellingPrice: roundUnitSellingPrice(s.sellingPrice),
+                    budget: Number(s.budget || 0),
                     name: s.serviceName || serviceDef?.name,
                     code: serviceDef?.code,
                     status: ContractServiceStatus.ACTIVE
@@ -462,6 +464,7 @@ export class ContractAddendumService {
                         service,
                         serviceId: service.id,
                         sellingPrice: roundUnitSellingPrice(item.sellingPrice || 0),
+                        budget: Number(item.budget || 0),
                         status: ContractServiceStatus.ACTIVE,
                         name: item.serviceName || service.name,
                         code: service.code,

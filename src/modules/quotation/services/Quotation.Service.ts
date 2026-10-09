@@ -14,6 +14,7 @@ import { opportunityEmitter, OPPORTUNITY_EVENTS } from "../../opportunity/events
 import { ContractService } from "../../contract/services/Contract.Service";
 import { calculatePricingTotals, roundUnitSellingPrice } from "../../../shared/helpers/PricingTax.helper";
 import { title } from "node:process";
+import { OpportunityServices } from "../../opportunity-service/entities/OpportunityService.entity";
 
 type QuotationActor = { id: string, role: string, userId?: string, companyId?: string };
 
@@ -22,6 +23,7 @@ export class QuotationService {
     private quotationDetailRepository = AppDataSource.getRepository(QuotationDetails);
     private opportunityRepository = AppDataSource.getRepository(Opportunities);
     private taskRepository = AppDataSource.getRepository(Tasks);
+    private opportunityServiceRepository = AppDataSource.getRepository(OpportunityServices);
     private notificationService = new NotificationService();
     private contractService = new ContractService();
 
@@ -114,6 +116,7 @@ export class QuotationService {
                 "opportunity.referralPartner",
                 "opportunity.quotations",
                 "opportunity.services",
+                "details.opportunityService",
                 "details",
                 "details.service"
             ]
@@ -189,20 +192,31 @@ export class QuotationService {
             const serviceRepository = AppDataSource.getRepository(Services);
             for (const item of details) {
                 const service = item.serviceId ? await serviceRepository.findOneBy({ id: item.serviceId }) : null;
+                const opportunityService = item.opportunityServiceId
+                    ? await this.opportunityServiceRepository.findOneBy({ id: item.opportunityServiceId })
+                    : null;
                 const detail = this.quotationDetailRepository.create({
                     quotation: savedQuotation,
                     service,
                     serviceId: item.serviceId,
+                    opportunityService: opportunityService || undefined,
+                    opportunityServiceId: item.opportunityServiceId,
                     quantity: item.quantity || 1,
                     sellingPrice: roundUnitSellingPrice(item.sellingPrice || 0),
                     costAtSale: item.costAtSale || 0,
+                    budget: Number(item.budget ?? opportunityService?.budget ?? 0),
                     name: item.name || service?.name || 'Service Item',
                     packageQuantity: item.packageQuantity || 1,
                     packageName: item.packageName,
+                    packageKey: item.packageKey,
                     servicePackageId: item.servicePackageId,
                     isPackageService: item.isPackageService || false
                 });
                 await this.quotationDetailRepository.save(detail);
+                if (opportunityService) {
+                    opportunityService.budget = Number(detail.budget || 0);
+                    await this.opportunityServiceRepository.save(opportunityService);
+                }
                 total += Number(detail.sellingPrice) * detail.quantity;
             }
         } else {
@@ -213,9 +227,12 @@ export class QuotationService {
                     quotation: savedQuotation,
                     service: oppService.service,
                     serviceId: oppService.service?.id,
+                    opportunityService: oppService,
+                    opportunityServiceId: oppService.id,
                     quantity: oppService.quantity,
                     sellingPrice: roundUnitSellingPrice(oppService.sellingPrice),
                     costAtSale: oppService.costAtSale,
+                    budget: oppService.budget,
                     name: oppService.service?.name || 'Standalone Service',
                     packageQuantity: 1,
                     isPackageService: false
@@ -233,12 +250,16 @@ export class QuotationService {
                                 quotation: savedQuotation,
                                 service: s.service,
                                 serviceId: s.service?.id,
+                                opportunityService: s,
+                                opportunityServiceId: s.id,
                                 quantity: Number(s.quantity) * Number(oppPkg.quantity || 1),
                                 sellingPrice: roundUnitSellingPrice(s.sellingPrice),
                                 costAtSale: s.costAtSale,
+                                budget: s.budget,
                                 name: s.service?.name || 'Package Item',
                                 packageQuantity: oppPkg.quantity || 1,
                                 packageName: oppPkg.name,
+                                packageKey: oppPkg.id,
                                 servicePackageId: oppPkg.servicePackageId,
                                 isPackageService: true
                             });
@@ -400,22 +421,33 @@ export class QuotationService {
                 if (!service) {
                     throw new Error(`Không tìm thấy dịch vụ với ID: ${item.serviceId}`);
                 }
+                const opportunityService = item.opportunityServiceId
+                    ? await this.opportunityServiceRepository.findOneBy({ id: item.opportunityServiceId })
+                    : null;
 
                 const detail = this.quotationDetailRepository.create({
                     quotation,
                     service,
                     serviceId: item.serviceId,
+                    opportunityService: opportunityService || undefined,
+                    opportunityServiceId: item.opportunityServiceId,
                     quantity: item.quantity || 1,
                     sellingPrice: roundUnitSellingPrice(item.sellingPrice || 0),
                     costAtSale: item.costAtSale || 0,
+                    budget: Number(item.budget ?? opportunityService?.budget ?? 0),
                     name: item.name || service.name,
                     packageQuantity: item.packageQuantity || 1,
                     packageName: item.packageName,
+                    packageKey: item.packageKey,
                     servicePackageId: item.servicePackageId,
                     isPackageService: item.isPackageService || false
                 });
 
                 await this.quotationDetailRepository.save(detail);
+                if (opportunityService) {
+                    opportunityService.budget = Number(detail.budget || 0);
+                    await this.opportunityServiceRepository.save(opportunityService);
+                }
                 total += Number(detail.sellingPrice) * detail.quantity;
 
                 // Keep in memory for the final return

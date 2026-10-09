@@ -3,6 +3,7 @@ import { BaseEntity } from "../../../shared/entities/BaseEntity";
 import { Quotations } from "./Quotation.entity";
 import { Services } from "../../service/entities/Service.entity";
 import { Jobs } from "../../job/entities/Job.entity";
+import { OpportunityServices } from "../../opportunity-service/entities/OpportunityService.entity";
 
 @Entity()
 export class QuotationDetails extends BaseEntity {
@@ -17,6 +18,13 @@ export class QuotationDetails extends BaseEntity {
     @Column({ type: "varchar", length: 26, nullable: true })
     serviceId: string;
 
+    @ManyToOne(() => OpportunityServices, { nullable: true })
+    @JoinColumn({ name: "opportunityServiceId" })
+    opportunityService: OpportunityServices;
+
+    @Column({ type: "varchar", length: 26, nullable: true })
+    opportunityServiceId: string;
+
     @ManyToOne(() => Jobs, { nullable: true })
     job: Jobs;
 
@@ -29,6 +37,9 @@ export class QuotationDetails extends BaseEntity {
     @Column({ type: "decimal", precision: 15, scale: 3, default: 0 })
     costAtSale: number; // Estimated cost per unit (for margin calc)
 
+    @Column({ type: "decimal", precision: 15, scale: 3, default: 0 })
+    budget: number; // Internal delivery budget per service item
+
     @Column({ nullable: true })
     name: string; // Snapshot of service name
 
@@ -37,6 +48,9 @@ export class QuotationDetails extends BaseEntity {
 
     @Column({ nullable: true })
     packageName: string;
+
+    @Column({ nullable: true })
+    packageKey: string;
 
     @Column({ nullable: true })
     servicePackageId: string;

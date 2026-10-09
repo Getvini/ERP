@@ -35,6 +35,9 @@ export class ContractServices extends BaseEntity {
     @Column({ type: "decimal", precision: 15, scale: 2, default: 0 })
     sellingPrice: number;
 
+    @Column({ type: "decimal", precision: 15, scale: 3, default: 0 })
+    budget: number;
+
     @ManyToOne(() => OpportunityServices, (oppService) => oppService.contractServices, { nullable: true })
     opportunityService: OpportunityServices;
 

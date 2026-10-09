@@ -29,7 +29,7 @@ export class OpportunityServiceService {
         return item;
     }
 
-    async create(data: { opportunityId: string, serviceId: string, quantity: number, costAtSale?: number }) {
+    async create(data: { opportunityId: string, serviceId: string, quantity: number, costAtSale?: number, budget?: number }) {
         const opportunity = await this.opportunityRepository.findOne({ where: SecurityService.withTenant({ id: data.opportunityId }) });
         if (!opportunity) throw new Error("Không tìm thấy cơ hội kinh doanh");
 
@@ -42,6 +42,7 @@ export class OpportunityServiceService {
             quantity: data.quantity || 1,
             sellingPrice: calculateRecommendedSellingPrice(Number(data.costAtSale ?? service.costPrice ?? 0)),
             costAtSale: Number(data.costAtSale ?? service.costPrice ?? 0),
+            budget: Number(data.budget || 0),
             ...SecurityService.getTenantWhere()
         } as any) as unknown as OpportunityServices;
 
@@ -53,6 +54,7 @@ export class OpportunityServiceService {
     async update(id: string, data: {
         quantity?: number,
         costAtSale?: number,
+        budget?: number,
         jobs?: { id: string, costAtSale?: number, briefVideo?: string }[]
     }) {
         const item = await this.getOne(id);
@@ -71,6 +73,7 @@ export class OpportunityServiceService {
 
         if (data.quantity !== undefined) item.quantity = data.quantity;
         if (data.costAtSale !== undefined) item.costAtSale = data.costAtSale;
+        if (data.budget !== undefined) item.budget = data.budget;
 
         if (Array.isArray(data.jobs)) {
             for (const input of data.jobs) {

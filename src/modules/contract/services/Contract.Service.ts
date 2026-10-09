@@ -292,26 +292,38 @@ export class ContractService {
         const month = (now.getMonth() + 1).toString().padStart(2, '0');
         const prefix = `SMGK-${year}-${month}`;
 
-        const count = await this.contractRepository.count({
+        const latest = await this.contractRepository.findOne({
             where: {
                 contractCode: Like(`${prefix}%`)
-            }
+            },
+            order: { contractCode: "DESC" }
         });
 
-        const sequence = (count + 1).toString().padStart(3, '0');
+        const latestSequence = latest?.contractCode?.match(new RegExp(`^${prefix}-(\\d+)$`))?.[1];
+        const sequenceNumber = latestSequence ? Number(latestSequence) + 1 : 1;
+        const sequence = sequenceNumber.toString().padStart(3, '0');
         return `${prefix}-${sequence}`;
+    }
+
+    private isDuplicateContractCodeError(error: any) {
+        return error?.code === "23505" &&
+            (
+                error?.constraint === "UQ_3a7e57df532082156b4c396b129" ||
+                String(error?.detail || error?.message || "").includes("contractCode")
+            );
     }
 
     async create(data: any, userInfo?: { id: string, role: string, userId?: string, companyId?: string }) {
         const { opportunityId, quotationId, quotationDetails, ...contractData } = data;
         let approvedQuotationDetails = Array.isArray(quotationDetails) ? quotationDetails : [];
 
+        const shouldAutoGenerateContractCode = !contractData.contractCode;
         // Auto-generate code
         if (!contractData.contractCode) {
             contractData.contractCode = await this.generateContractCode();
         } else {
             const existing = await this.contractRepository.findOne({
-                where: SecurityService.withTenant({ contractCode: contractData.contractCode }, userInfo)
+                where: { contractCode: contractData.contractCode }
             });
             if (existing) {
                 throw new Error("Mã hợp đồng đã tồn tại");
@@ -390,7 +402,7 @@ export class ContractService {
             if (approvedQuotationDetails.length === 0 && quotationId) {
                 const quotation = await this.quotationRepository.findOne({
                     where: { id: quotationId },
-                    relations: ["opportunity", "details", "details.service"]
+                    relations: ["opportunity", "details", "details.service", "details.opportunityService"]
                 });
 
                 if (!quotation) {
@@ -436,7 +448,7 @@ export class ContractService {
                     0
                 );
                 const quotationCost = approvedQuotationDetails.reduce(
-                    (sum, detail) => sum + (Number(detail.costAtSale || 0) * (detail.quantity || 1)),
+                    (sum, detail) => sum + ((Number(detail.costAtSale || 0) + Number(detail.budget || 0)) * (detail.quantity || 1)),
                     0
                 );
                 if (finalSellingPrice === undefined || finalSellingPrice === null || finalSellingPrice === 0) {
@@ -459,7 +471,7 @@ export class ContractService {
                 }
 
                 // Cost calculation: Always sum of Opportunity Services
-                const costSum = opportunity.services?.reduce((sum, os) => sum + (Number(os.costAtSale) * (os.quantity || 1)), 0);
+                const costSum = opportunity.services?.reduce((sum, os) => sum + ((Number(os.costAtSale || 0) + Number(os.budget || 0)) * (os.quantity || 1)), 0);
                 if (costSum > 0) {
                     finalCost = costSum;
                 }
@@ -475,9 +487,10 @@ export class ContractService {
                     const service = await this.serviceRepository.findOne({ where: SecurityService.withTenant({ id: serviceId }, userInfo) });
                     if (service) {
                         const qty = item.quantity || 1;
+                        const budget = Number(item.budget || 0);
                         const sellPrice = roundUnitSellingPrice(item.sellingPrice !== undefined ? item.sellingPrice : service.costPrice || 0);
                         computedSellingPrice += sellPrice * qty;
-                        computedCost += Number(service.costPrice || 0) * qty;
+                        computedCost += (Number(service.costPrice || 0) + budget) * qty;
                     }
                 }
             }
@@ -526,7 +539,23 @@ export class ContractService {
         }
 
 
-        const savedContract = (await this.contractRepository.save(contract)) as unknown as Contracts;
+        let savedContract: Contracts | null = null;
+        const maxContractCodeAttempts = shouldAutoGenerateContractCode ? 5 : 1;
+        for (let attempt = 1; attempt <= maxContractCodeAttempts; attempt++) {
+            try {
+                savedContract = (await this.contractRepository.save(contract)) as unknown as Contracts;
+                break;
+            } catch (error: any) {
+                if (!shouldAutoGenerateContractCode || !this.isDuplicateContractCodeError(error) || attempt === maxContractCodeAttempts) {
+                    throw error;
+                }
+                contract.contractCode = await this.generateContractCode();
+            }
+        }
+
+        if (!savedContract) {
+            throw new Error("Không thể tạo hợp đồng");
+        }
 
         // MAP Opportunity Services to Contract Services
         if (opportunity) {
@@ -536,11 +565,13 @@ export class ContractService {
                     const detailService = detail.service || (detailServiceId
                         ? await this.serviceRepository.findOne({ where: SecurityService.withTenant({ id: detailServiceId }, userInfo) })
                         : null);
-                    const opportunityService = opportunity.services?.find(item =>
-                        item.serviceId === detailServiceId &&
-                        item.isPackageService === Boolean(detail.isPackageService) &&
-                        (!detail.isPackageService || item.packageName === detail.packageName)
-                    );
+                    const opportunityService = detail.opportunityService ||
+                        opportunity.services?.find(item => item.id === detail.opportunityServiceId) ||
+                        opportunity.services?.find(item =>
+                            item.serviceId === detailServiceId &&
+                            item.isPackageService === Boolean(detail.isPackageService) &&
+                            (!detail.isPackageService || item.packageName === detail.packageName)
+                        );
                     const qty = Number(detail.quantity || 1);
                     for (let i = 0; i < qty; i++) {
                         const cs = this.contractServiceRepository.create({
@@ -548,6 +579,7 @@ export class ContractService {
                             service: detailService,
                             serviceId: detailServiceId,
                             sellingPrice: roundUnitSellingPrice(detail.sellingPrice),
+                            budget: Number(detail.budget ?? opportunityService?.budget ?? 0),
                             opportunityService,
                             name: detail.name || detailService?.name,
                             code: detailService?.code,
@@ -572,6 +604,7 @@ export class ContractService {
                             service: os.service,
                             serviceId: os.service?.id || os.serviceId,
                             sellingPrice: roundUnitSellingPrice(os.sellingPrice),
+                            budget: Number(os.budget || 0),
                             opportunityService: os,
                             name: os.name || os.service?.name,
                             code: os.service?.code,
@@ -598,6 +631,7 @@ export class ContractService {
                                 service: service,
                                 serviceId: service.id,
                                 sellingPrice: sellPrice,
+                                budget: Number(item.budget || 0),
                                 name: service.name,
                                 code: service.code,
                                 isPackageService: false,
@@ -630,6 +664,7 @@ export class ContractService {
                                         service: item.service,
                                         serviceId: item.service.id,
                                         sellingPrice: sellPrice,
+                                        budget: Number(pkgItem.budget || 0),
                                         name: item.service.name,
                                         code: item.service.code,
                                         packageName: pkg.name,

@@ -253,15 +253,20 @@ export class OpportunityService {
         const month = (now.getMonth() + 1).toString().padStart(2, '0');
         const prefix = `CH-${year}-${month}`;
 
-        // Find the count of opportunities created in this year and month
-        const count = await this.opportunityRepository.count({
-            where: {
-                opportunityCode: Like(`${prefix}%`)
-            }
+        const latest = await this.opportunityRepository.findOne({
+            where: { opportunityCode: Like(`${prefix}-%`) },
+            order: { opportunityCode: "DESC" }
         });
 
-        const sequence = (count + 1).toString().padStart(3, '0');
+        const latestSequence = Number(latest?.opportunityCode?.slice(prefix.length + 1) || 0);
+        const sequence = (latestSequence + 1).toString().padStart(3, '0');
         return `${prefix}-${sequence}`;
+    }
+
+    private isDuplicateOpportunityCodeError(error: any) {
+        return error?.code === "23505" &&
+            typeof error?.detail === "string" &&
+            error.detail.includes("opportunityCode");
     }
 
     async create(data: any = {}, userInfo?: { id: string, role: string, userId?: string, companyId?: string }) {
@@ -286,8 +291,10 @@ export class OpportunityService {
             await this.checkTaxIdUniqueness(leadTaxId, userInfo);
         }
 
+        const shouldAutoGenerateCode = !opportunityData.opportunityCode;
+
         // Auto-generate code if not provided
-        if (!opportunityData.opportunityCode) {
+        if (shouldAutoGenerateCode) {
             opportunityData.opportunityCode = await this.generateOpportunityCode();
         } else {
             // Check if opportunity code already exists
@@ -351,7 +358,22 @@ export class OpportunityService {
         }
 
         await this.validateVideoBriefs(services, packages);
-        const savedOpportunity = await this.opportunityRepository.save(opportunity);
+
+        let savedOpportunity: Opportunities | null = null;
+        for (let attempt = 0; attempt < 5; attempt++) {
+            try {
+                if (shouldAutoGenerateCode) {
+                    opportunity.opportunityCode = await this.generateOpportunityCode();
+                }
+                savedOpportunity = await this.opportunityRepository.save(opportunity);
+                break;
+            } catch (error: any) {
+                if (!shouldAutoGenerateCode || !this.isDuplicateOpportunityCodeError(error) || attempt === 4) {
+                    throw error;
+                }
+            }
+        }
+        if (!savedOpportunity) throw new Error("Không thể tạo mã cơ hội, vui lòng thử lại");
 
         // Handle service and package selection
         await this.syncServicesAndPackages(savedOpportunity, services, packages);
@@ -860,6 +882,7 @@ export class OpportunityService {
                             serviceId: service.id,
                             sellingPrice: s.sellingPrice || service.costPrice || 0,
                             costAtSale: service.costPrice || 0,
+                            budget: Number(s.budget || 0),
                             quantity: (s.quantity || 1) * (savedPkg.quantity || 1),
                             name: s.name || service.name,
                             packageName: savedPkg.name,
@@ -879,6 +902,7 @@ export class OpportunityService {
                 const serviceId = typeof item === 'string' ? item : (item.serviceId || item.id);
                 const quantity = typeof item === 'object' ? (item.quantity || 1) : 1;
                 const sellingPrice = typeof item === 'object' ? item.sellingPrice : undefined;
+                const budget = typeof item === 'object' ? item.budget : undefined;
 
                 const service = await this.serviceRepository.findOne({
                     where: SecurityService.withTenant({ id: serviceId }),
@@ -894,6 +918,7 @@ export class OpportunityService {
                     serviceId: service.id,
                     sellingPrice: sellingPrice || service.costPrice || 0,
                     costAtSale: service.costPrice || 0,
+                    budget: Number(budget || 0),
                     quantity: quantity,
                     name: (typeof item === 'object' ? item.name : null) || service.name,
                     isPackageService: false,

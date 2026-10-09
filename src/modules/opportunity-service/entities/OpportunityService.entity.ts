@@ -32,6 +32,9 @@ export class OpportunityServices extends BaseEntity {
     @Column({ type: "decimal", precision: 15, scale: 3, default: 0 })
     costAtSale: number;
 
+    @Column({ type: "decimal", precision: 15, scale: 3, default: 0 })
+    budget: number;
+
     @Column({ type: "int", default: 1 })
     quantity: number;
 

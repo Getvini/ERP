@@ -57,6 +57,7 @@ export class ContractAddendums extends BaseEntity {
         packageQuantity?: number,
         isPackageService?: boolean,
         sellingPrice?: number,
+        budget?: number,
         cost?: number,
         unit?: string,
         description?: string

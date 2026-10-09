@@ -135,6 +135,7 @@ export class ProjectBaseService {
             quantity: cs.isPackageService && packageQuantity > 0 ? serviceQuantity / packageQuantity : 1,
             isPackageService: cs.isPackageService,
             sellingPrice: Number(cs.sellingPrice || 0),
+            budget: Number(cs.budget || 0),
             cost: Number(cs.service?.costPrice || 0),
             unit: cs.service?.unit || "",
             description: cs.service?.description,
@@ -211,6 +212,11 @@ export class ProjectBaseService {
             }
 
             if (opportunityService) {
+                const nextBudget = Number(opportunityService.budget || 0);
+                if (Number(contractService.budget || 0) !== nextBudget) {
+                    contractService.budget = nextBudget;
+                    changed = true;
+                }
                 if (contractService.packageName !== opportunityService.packageName) {
                     contractService.packageName = opportunityService.packageName;
                     changed = true;
@@ -257,6 +263,7 @@ export class ProjectBaseService {
                         service: opportunityService.service,
                         serviceId: opportunityService.service?.id || opportunityService.serviceId,
                         sellingPrice: opportunityService.sellingPrice,
+                        budget: opportunityService.budget,
                         opportunityService,
                         name: opportunityService.name || opportunityService.service?.name,
                         code: opportunityService.service?.code,
@@ -647,6 +654,7 @@ export class ProjectBaseService {
                 select: {
                     id: true,
                     sellingPrice: true,
+                    budget: true,
                     status: true,
                     results: true,
                     name: true,
